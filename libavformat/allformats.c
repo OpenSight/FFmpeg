@@ -360,6 +360,7 @@ void av_register_all(void)
     REGISTER_PROTOCOL(FFRTMPCRYPT,      ffrtmpcrypt);
     REGISTER_PROTOCOL(FFRTMPHTTP,       ffrtmphttp);
     REGISTER_PROTOCOL(FILE,             file);
+    REGISTER_PROTOCOL(CACHED_FILE,      cached_file);    
     REGISTER_PROTOCOL(FTP,              ftp);
     REGISTER_PROTOCOL(GOPHER,           gopher);
     REGISTER_PROTOCOL(HLS,              hls);
