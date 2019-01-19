@@ -48,6 +48,7 @@ typedef struct CachedFileContext {
     int fd;
     FILE * f;
     int buf_size;
+    int write_flags;
     unsigned char * buf; 
 
 } CachedFileContext;
@@ -148,10 +149,13 @@ static int cached_file_open(URLContext *h, const char *filename, int flags)
     
     if (flags & AVIO_FLAG_WRITE && flags & AVIO_FLAG_READ) {
         mode = "w+b";
+        c->write_flags = 1;
     } else if (flags & AVIO_FLAG_WRITE) {
         mode = "wb";
+        c->write_flags = 1;
     } else {
         mode = "rb";
+        c->write_flags = 0;
     }
     f = fopen(filename, mode);
     if(f == NULL){
@@ -176,7 +180,13 @@ static int cached_file_open(URLContext *h, const char *filename, int flags)
 static int cached_file_close(URLContext *h)
 {
     int r;
-    CachedFileContext *c = h->priv_data;    
+    CachedFileContext *c = h->priv_data;
+
+    /* flush the file when close */    
+    if(c->write_flags){
+        fflush(c->f);
+        fsync(c->fd);
+    }
     r = fclose(c->f);
     if(r){
         return AVERROR(errno);
