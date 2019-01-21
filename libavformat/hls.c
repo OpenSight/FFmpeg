@@ -636,6 +636,8 @@ static int open_url(HLSContext *c, URLContext **uc, const char *url, AVDictionar
         }
     } else if (av_strstart(proto_name, "http", NULL)) {
         ;
+    } else if (av_strstart(proto_name, "cf", NULL)) {  /* cf is the cached file protocol */
+        ;
     } else
         return AVERROR_INVALIDDATA;
 

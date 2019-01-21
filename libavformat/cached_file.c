@@ -170,6 +170,8 @@ static int cached_file_open(URLContext *h, const char *filename, int flags)
     }
     c->f = f;
     c->fd = fileno(f);
+    
+    h->is_streamed = 0;
 
     return 0;
 }
