@@ -54,7 +54,7 @@ typedef struct CachedFileContext {
 } CachedFileContext;
 
 static const AVOption cached_file_options[] = {
-    { "buf_size", "set cached buffer size", offsetof(CachedFileContext, buf_size), AV_OPT_TYPE_INT, { .i64 = 1048576 /*1MB*/ }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM },
+    { "buf_size", "set cached buffer size", offsetof(CachedFileContext, buf_size), AV_OPT_TYPE_INT, { .i64 = 2097152 /*2MB*/ }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM },
     { NULL }
 };
 
