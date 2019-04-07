@@ -658,7 +658,7 @@ static int open_url(AVFormatContext *s, AVIOContext **pb, const char *url,
         } else if (ret < 0) {
             if (ret != AVERROR_EOF)
                 av_log(s, AV_LOG_WARNING,
-                    "keepalive request failed for '%s', retrying with new connection: %s\n",
+                    "keepalive request failed for '%s' when opening url, retrying with new connection: %s\n",
                     url, av_err2str(ret));
             ret = s->io_open(s, pb, url, AVIO_FLAG_READ, &tmp);
         }
@@ -715,7 +715,7 @@ static int parse_playlist(HLSContext *c, const char *url,
         } else if (ret < 0) {
             if (ret != AVERROR_EOF)
                 av_log(c->ctx, AV_LOG_WARNING,
-                    "keepalive request failed for '%s', retrying with new connection: %s\n",
+                    "keepalive request failed for '%s' when parsing playlist, retrying with new connection: %s\n",
                     url, av_err2str(ret));
             in = NULL;
         }
@@ -1868,7 +1868,7 @@ static int hls_read_header(AVFormatContext *s)
     /* Open the demuxer for each playlist */
     for (i = 0; i < c->n_playlists; i++) {
         struct playlist *pls = c->playlists[i];
-        AVInputFormat *in_fmt = NULL;
+        ff_const59 AVInputFormat *in_fmt = NULL;
 
         if (!(pls->ctx = avformat_alloc_context())) {
             ret = AVERROR(ENOMEM);
@@ -2285,7 +2285,7 @@ static int hls_read_seek(AVFormatContext *s, int stream_index,
     return 0;
 }
 
-static int hls_probe(AVProbeData *p)
+static int hls_probe(const AVProbeData *p)
 {
     /* Require #EXTM3U at the start, and either one of the ones below
      * somewhere for a proper match. */

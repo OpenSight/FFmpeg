@@ -298,7 +298,6 @@ External library support:
   --enable-lv2             enable LV2 audio filtering [no]
   --disable-lzma           disable lzma [autodetect]
   --enable-decklink        enable Blackmagic DeckLink I/O support [no]
-  --enable-libndi_newtek   enable Newteck NDI I/O support [no]
   --enable-mbedtls         enable mbedTLS, needed for https support
                            if openssl, gnutls or libtls is not used [no]
   --enable-mediacodec      enable Android MediaCodec support [no]
@@ -1713,7 +1712,6 @@ EXTERNAL_LIBRARY_GPL_LIST="
 
 EXTERNAL_LIBRARY_NONFREE_LIST="
     decklink
-    libndi_newtek
     libfdk_aac
     openssl
     libtls
@@ -3299,10 +3297,6 @@ decklink_indev_extralibs="-lstdc++"
 decklink_outdev_deps="decklink threads"
 decklink_outdev_suggest="libklvanc"
 decklink_outdev_extralibs="-lstdc++"
-libndi_newtek_indev_deps="libndi_newtek"
-libndi_newtek_indev_extralibs="-lndi"
-libndi_newtek_outdev_deps="libndi_newtek"
-libndi_newtek_outdev_extralibs="-lndi"
 dshow_indev_deps="IBaseFilter"
 dshow_indev_extralibs="-lpsapi -lole32 -lstrmiids -luuid -loleaut32 -lshlwapi"
 fbdev_indev_deps="linux_fb_h"
@@ -6028,14 +6022,6 @@ check_type "windows.h d3d11.h" "ID3D11VideoDecoder"
 check_type "windows.h d3d11.h" "ID3D11VideoContext"
 check_type "d3d9.h dxva2api.h" DXVA2_ConfigPictureDecode -D_WIN32_WINNT=0x0602
 
-check_type "va/va.h va/va_dec_hevc.h" "VAPictureParameterBufferHEVC"
-check_struct "va/va.h" "VADecPictureParameterBufferVP9" bit_depth
-check_struct "va/va.h va/va_vpp.h" "VAProcPipelineCaps" rotation_flags
-check_type "va/va.h va/va_enc_hevc.h" "VAEncPictureParameterBufferHEVC"
-check_type "va/va.h va/va_enc_jpeg.h" "VAEncPictureParameterBufferJPEG"
-check_type "va/va.h va/va_enc_vp8.h"  "VAEncPictureParameterBufferVP8"
-check_type "va/va.h va/va_enc_vp9.h"  "VAEncPictureParameterBufferVP9"
-
 check_type "vdpau/vdpau.h" "VdpPictureInfoHEVC"
 
 if enabled cuda_sdk; then
@@ -6122,7 +6108,6 @@ enabled cuda_nvcc         && { check_nvcc || die "ERROR: failed checking for nvc
 enabled chromaprint       && require chromaprint chromaprint.h chromaprint_get_version -lchromaprint
 enabled decklink          && { require_headers DeckLinkAPI.h &&
                                { test_cpp_condition DeckLinkAPIVersion.h "BLACKMAGIC_DECKLINK_API_VERSION >= 0x0a090500" || die "ERROR: Decklink API version must be >= 10.9.5."; } }
-enabled libndi_newtek     && require_headers Processing.NDI.Lib.h
 enabled frei0r            && require_headers "frei0r.h dlfcn.h"
 enabled gmp               && require gmp gmp.h mpz_export -lgmp
 enabled gnutls            && require_pkg_config gnutls gnutls gnutls/gnutls.h gnutls_global_init
@@ -6142,7 +6127,7 @@ enabled libcelt           && require libcelt celt/celt.h celt_decode -lcelt0 &&
                                die "ERROR: libcelt must be installed and version must be >= 0.11.0."; }
 enabled libcaca           && require_pkg_config libcaca caca caca.h caca_create_canvas
 enabled libcodec2         && require libcodec2 codec2/codec2.h codec2_create -lcodec2
-enabled libdav1d          && require_pkg_config libdav1d "dav1d >= 0.1.0" "dav1d/dav1d.h" dav1d_version
+enabled libdav1d          && require_pkg_config libdav1d "dav1d >= 0.2.1" "dav1d/dav1d.h" dav1d_version
 enabled libdavs2          && require_pkg_config libdavs2 "davs2 >= 1.6.0" davs2.h davs2_decoder_open
 enabled libdc1394         && require_pkg_config libdc1394 libdc1394-2 dc1394/dc1394.h dc1394_new
 enabled libdrm            && require_pkg_config libdrm libdrm xf86drm.h drmGetVersion
@@ -6468,6 +6453,14 @@ if enabled vaapi; then
     fi
 
     check_cpp_condition vaapi_1 "va/va.h" "VA_CHECK_VERSION(1, 0, 0)"
+
+    check_type "va/va.h va/va_dec_hevc.h" "VAPictureParameterBufferHEVC"
+    check_struct "va/va.h" "VADecPictureParameterBufferVP9" bit_depth
+    check_struct "va/va.h va/va_vpp.h" "VAProcPipelineCaps" rotation_flags
+    check_type "va/va.h va/va_enc_hevc.h" "VAEncPictureParameterBufferHEVC"
+    check_type "va/va.h va/va_enc_jpeg.h" "VAEncPictureParameterBufferJPEG"
+    check_type "va/va.h va/va_enc_vp8.h"  "VAEncPictureParameterBufferVP8"
+    check_type "va/va.h va/va_enc_vp9.h"  "VAEncPictureParameterBufferVP9"
 fi
 
 if enabled_all opencl libdrm ; then
@@ -6478,9 +6471,12 @@ if enabled_all opencl libdrm ; then
 fi
 
 if enabled_all opencl vaapi ; then
-    enabled opencl_drm_beignet && enable opencl_vaapi_beignet
-    check_type "CL/cl.h CL/va_ext.h" "clCreateFromVA_APIMediaSurfaceINTEL_fn" &&
-        enable opencl_vaapi_intel_media
+    if enabled opencl_drm_beignet ; then
+        enable opencl_vaapi_beignet
+    else
+        check_type "CL/cl.h CL/cl_va_api_media_sharing_intel.h" "clCreateFromVA_APIMediaSurfaceINTEL_fn" &&
+            enable opencl_vaapi_intel_media
+    fi
 fi
 
 if enabled_all opencl dxva2 ; then

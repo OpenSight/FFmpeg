@@ -293,6 +293,9 @@ Set container format (mp4/webm) options using a @code{:} separated list of
 key=value parameters. Values containing @code{:} special characters must be
 escaped.
 
+@item -global_sidx @var{global_sidx}
+Write global SIDX atom. Applicable only for single file, mp4 output, non-streaming mode.
+
 @item -dash_segment_type @var{dash_segment_type}
 Possible values:
 @item auto
@@ -1629,7 +1632,7 @@ ffmpeg -i file.mpg -c copy \
      out.ts
 @end example
 
-@section mxf, mxf_d10
+@section mxf, mxf_d10, mxf_opatom
 
 MXF muxer.
 
@@ -1641,7 +1644,7 @@ The muxer options are:
 @item store_user_comments @var{bool}
 Set if user comments should be stored if available or never.
 IRT D-10 does not allow user comments. The default is thus to write them for
-mxf but not for mxf_d10
+mxf and mxf_opatom but not for mxf_d10
 @end table
 
 @section null
