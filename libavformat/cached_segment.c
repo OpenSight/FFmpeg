@@ -1,0 +1,983 @@
+/**
+ * This file is part of ffmpeg_ivr
+ * 
+ * Copyright (C) 2016  OpenSight (www.opensight.cn)
+ * 
+ * ffmpeg_ivr is an extension of ffmpeg to implements the new feature for IVR
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+**/
+#include "config.h"
+
+#include <float.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <math.h>
+#include <sys/time.h>
+
+#include "libavutil/avassert.h"
+#include "libavutil/mathematics.h"
+#include "libavutil/parseutils.h"
+#include "libavutil/avstring.h"
+#include "libavutil/opt.h"
+#include "libavutil/log.h"
+#include "libavutil/fifo.h"
+#include "libavutil/time.h"
+
+#include "avformat.h"
+#include "internal.h"    
+#include "cached_segment.h"
+
+
+#define SEGMENT_IO_BUFFER_SIZE 32768
+#define MAX_URL_SIZE 4096
+
+#define MIN(a,b) ((a) > (b) ? (b) : (a))
+
+//////////////////////////
+//segment operation
+
+static CachedSegment * cached_segment_alloc(uint32_t max_size)
+{
+    CachedSegment * s;
+    s = av_mallocz(sizeof(CachedSegment) + max_size);
+    s->next = NULL;
+    s->buffer_max_size = max_size;
+    s->start_ts = -1.0;
+    s->duration = 0.0;
+    //s->buffer = av_malloc(max_size);
+    s->size = 0;
+    s->start_dts = AV_NOPTS_VALUE;
+    
+/*    
+    av_log(NULL, AV_LOG_WARNING, 
+           "new segment(size:%d) allocated\n",
+           max_size);
+*/
+    return s;    
+}
+static void cached_segment_free(CachedSegment * segment)
+{
+    //av_free(segment->buffer);
+    av_free(segment);
+}
+
+static void cached_segment_reset(CachedSegment * segment)
+{
+    segment->start_ts = -1.0;
+    segment->duration = 0.0;
+    segment->pos = 0;
+    segment->next = NULL;
+    segment->sequence = 0;
+    segment->size = 0;
+    segment->start_dts = AV_NOPTS_VALUE;
+    segment->next_dts = AV_NOPTS_VALUE;
+}
+static int write_segment(void *opaque, uint8_t *buf, int buf_size)
+{  
+    CachedSegment * segment = (CachedSegment *) opaque;
+    if((segment->buffer_max_size - segment->size) < buf_size){
+        return -1;
+    }
+    memcpy(segment->buffer + segment->size, buf, buf_size);
+    segment->size += buf_size;
+
+    return buf_size;
+} 
+
+
+//////////////////////////
+//segment list operation
+static void init_segment_list(CachedSegmentList * seg_list)
+{
+    seg_list->seg_num = 0;
+    seg_list->first = seg_list->last = NULL;
+}
+
+static void put_segment_list(CachedSegmentList *seg_list, CachedSegment * segment)
+{
+    segment->next = NULL;    
+    if(seg_list->first == NULL){
+        seg_list->first = segment;
+    }else{
+        seg_list->last->next = segment;
+        
+    }
+    seg_list->last = segment;
+    seg_list->seg_num ++;
+}
+
+static CachedSegment * get_segment_list(CachedSegmentList *seg_list)
+{
+    CachedSegment * segment;
+    if(seg_list->first == NULL){
+        return NULL;
+    }
+    segment = seg_list->first;
+    seg_list->first = segment->next;
+    segment->next = NULL;
+    if(seg_list->first == NULL){
+        seg_list->last = NULL;
+    }
+    seg_list->seg_num --;   
+    return segment;
+    
+}
+
+
+static void free_segment_list(CachedSegmentList *seg_list)
+{
+    CachedSegment * segment = seg_list->first;
+
+    while(segment != NULL){
+        CachedSegment * segment_to_free = segment;
+        segment = segment->next;
+        cached_segment_free(segment_to_free);
+    }
+    init_segment_list(seg_list);   
+}
+
+
+
+/////////////////////////////
+//writer operations 
+
+extern CachedSegmentWriter cseg_file_writer;
+extern CachedSegmentWriter cseg_dummy_writer;
+extern CachedSegmentWriter cseg_ivr_writer;
+
+static CachedSegmentWriter * cseg_writers[] = {
+    &cseg_file_writer,
+    &cseg_dummy_writer,
+#if CONFIG_LIBCURL
+    &cseg_ivr_writer,
+#endif
+    NULL
+};
+
+
+static CachedSegmentWriter *find_segment_writer(char * filename)
+{
+    char hostname[1024], proto[16];
+    char auth[1024];
+    char path[MAX_URL_SIZE];
+    int port, i;
+    CachedSegmentWriter * writer;
+    
+
+    av_url_split(proto, sizeof(proto), auth, sizeof(auth),
+                 hostname, sizeof(hostname), &port,
+                 path, sizeof(path), filename);
+    if(strlen(proto) == 0){
+        //no protocol, means file
+        strcpy(proto, "file");
+    }
+    
+    for(i=0; cseg_writers[i] != NULL; i++){
+        writer = cseg_writers[i];
+        if(av_match_name(proto, writer->protos)){
+            return writer;
+        }        
+    }
+    return NULL;
+    
+}
+
+////////////////////////////
+//cseg format operations
+
+static int ff_check_interrupt(AVIOInterruptCB *cb)
+{
+    int ret;
+    if (cb && cb->callback && (ret = cb->callback(cb->opaque)))
+        return ret;
+    return 0;
+}
+
+
+static CachedSegment * get_free_segment(CachedSegmentContext *cseg)
+{
+    CachedSegment * segment = NULL;
+    pthread_mutex_lock(&cseg->mutex);
+    if(cseg->free_list.seg_num > 0){
+        segment = get_segment_list(&(cseg->free_list));
+        cached_segment_reset(segment);
+    }
+    pthread_mutex_unlock(&cseg->mutex);
+    if(segment == NULL){
+        segment = cached_segment_alloc(cseg->max_seg_size);
+    }
+    return segment;
+}
+
+static void recycle_free_segment(CachedSegmentContext *cseg, CachedSegment * segment)
+{
+    cached_segment_reset(segment);
+    pthread_mutex_lock(&cseg->mutex);        
+    put_segment_list(&(cseg->free_list), segment);        
+    pthread_mutex_unlock(&cseg->mutex);
+}
+#define SEGMENT_HAS_DROPED   1
+/* append current segment to the cached segment list */
+static int append_cur_segment(AVFormatContext *s)
+{
+    CachedSegmentContext *cseg = (CachedSegmentContext *)s->priv_data;
+    CachedSegment * segment = cseg->cur_segment;
+    int ret = 0;
+    
+    if(segment == NULL){
+        //no current segment, just finished
+        return 0;
+    }
+    
+    cseg->cur_segment = NULL;
+       
+    if(segment->start_ts <= 0.0 ||
+       segment->duration < 1){
+        //segment is invalid
+        recycle_free_segment(cseg, segment);
+        return SEGMENT_HAS_DROPED;
+    }
+        
+    pthread_mutex_lock(&cseg->mutex);
+    if(!(cseg->flags & CSEG_FLAG_NONBLOCK)){
+        while(cseg->cached_list.seg_num >= cseg->max_nb_segments){
+            pthread_mutex_unlock(&cseg->mutex);            
+            if (ff_check_interrupt(&s->interrupt_callback)){ 
+                recycle_free_segment(cseg, segment);
+                return AVERROR_EXIT;  
+            }else if(cseg->consumer_exit_code){
+                recycle_free_segment(cseg, segment);
+                return cseg->consumer_exit_code;
+            }
+            av_usleep(10000); //wait for 10ms
+            pthread_mutex_lock(&cseg->mutex);
+        }  
+    }//if(!(cseg->flags & CSEG_FLAG_NONBLOCK)){
+        
+    
+    if(cseg->cached_list.seg_num >= cseg->max_nb_segments){ 
+        av_log(s, AV_LOG_WARNING, 
+               "One Segment(size:%d, start_ts:%f, duration:%f, pos:%lld, sequence:%lld) "
+               "is dropped because of slow writer\n", 
+                segment->size, 
+                segment->start_ts, segment->duration, 
+                (long long)segment->pos, (long long)segment->sequence); 
+        cached_segment_reset(segment);
+        put_segment_list(&(cseg->free_list), segment);     
+        ret = SEGMENT_HAS_DROPED;
+    }else{
+/*
+        av_log(s, AV_LOG_INFO, 
+                "One Segment(size:%d, start_ts:%f, duration:%f, pos:%lld, sequence:%lld) "
+                "is added to cached list(len:%d)\n", 
+                segment->size, 
+                segment->start_ts, segment->duration, 
+                segment->pos, segment->sequence, 
+                cseg->cached_list.seg_num); 
+*/
+        put_segment_list(&(cseg->cached_list), segment);  
+        ret = 0;
+    }
+    pthread_cond_signal(&cseg->not_empty); //wakeup comsumer    
+    
+    pthread_mutex_unlock(&cseg->mutex);
+    
+    return ret;
+}
+
+static void * consumer_routine(void *arg)
+{
+    CachedSegmentContext *cseg = 
+        (CachedSegmentContext *)arg;
+    CachedSegment * segment = NULL;
+    int ret = 0;
+   
+    
+    pthread_mutex_lock(&cseg->mutex);
+    while(cseg->consumer_active){
+        int keep_seg_num = 0;         
+        
+        //try write out all segment in cached list
+        while((segment = cseg->cached_list.first) != NULL){            
+            ret = 0;
+            if(cseg->writer != NULL && cseg->writer->write_segment != NULL){   
+                pthread_mutex_unlock(&cseg->mutex);
+                //because there is only one comsumer, the first segment is safe to access without lock
+                ret = cseg->writer->write_segment(cseg, segment);
+                pthread_mutex_lock(&cseg->mutex);
+            } 
+            if(ret == 0){
+                //successful
+                
+                //remove the segment from cached list
+                segment = get_segment_list(&(cseg->cached_list));                
+                cached_segment_reset(segment);          
+                put_segment_list(&(cseg->free_list), segment);                        
+                
+            }else if(ret == 1){
+                //should keep in fifo
+                break;
+            }else if(ret < 0){
+                //error     
+                pthread_mutex_unlock(&cseg->mutex);
+                cseg->consumer_exit_code = ret;
+                pthread_exit(NULL);     
+            }else{
+                //not support other ret code, consider error
+                pthread_mutex_unlock(&cseg->mutex);
+                av_log(NULL, AV_LOG_ERROR,  "[cseg] cannot support the writer return code:%d\n", ret);        
+                cseg->consumer_exit_code = AVERROR(EINVAL);
+                pthread_exit(NULL); 
+            }
+        }// while((segment = cseg->cached_list.first) != NULL){
+        
+        //clean up the expired segments
+        keep_seg_num = MIN((uint32_t)ceil(cseg->pre_recoding_time / cseg->time), 
+                            cseg->max_nb_segments - 1);    
+        while(cseg->cached_list.seg_num > keep_seg_num){
+            //remove the segment from cached list
+            segment = get_segment_list(&(cseg->cached_list));                
+            cached_segment_reset(segment);          
+            put_segment_list(&(cseg->free_list), segment);              
+        }//while(cseg->cached_list.seg_num > keep_seg_num){
+            
+        if(cseg->consumer_active){
+            pthread_cond_wait(&(cseg->not_empty), &(cseg->mutex)); //wait for next time
+        }
+        
+    }//while(cseg->consumer_active){
+    pthread_mutex_unlock(&cseg->mutex);
+    
+    //flush all the cached segment 
+    //because cseg->consumer_active is 0 which means no producer existed now, 
+    //we don't need lock any more
+    while((segment = get_segment_list(&(cseg->cached_list))) != NULL){
+        //call writer's method
+        ret = 0;
+        if(cseg->writer != NULL && cseg->writer->write_segment != NULL){                    
+            ret = cseg->writer->write_segment(cseg, segment);
+        }
+        cached_segment_reset(segment);          
+        put_segment_list(&(cseg->free_list), segment);         
+        
+        if(ret < 0){
+            //error  
+            cseg->consumer_exit_code = ret;
+            break;                
+        }else if(ret == 0){
+            //successful
+            
+        }else if(ret == 1){
+            //should keep in fifo  
+            break;
+        }else{
+            cseg->consumer_exit_code = AVERROR(EINVAL);
+            break;   
+        }
+    }
+    
+    return NULL;    
+}
+
+
+
+static int cseg_mux_init(AVFormatContext *s)
+{
+    CachedSegmentContext *cseg = s->priv_data;
+    AVFormatContext *oc;
+    int i, ret;
+
+    ret = avformat_alloc_output_context2(&cseg->avf, cseg->oformat, NULL, NULL);
+    if (ret < 0)
+        return ret;
+    oc = cseg->avf;
+    
+    oc->oformat            = cseg->oformat;
+    oc->interrupt_callback = s->interrupt_callback;
+    oc->max_delay          = s->max_delay;
+    av_dict_copy(&oc->metadata, s->metadata, 0);
+    oc->opaque             = s->opaque;
+    oc->io_close           = s->io_close;
+    oc->io_open            = s->io_open;
+    oc->flags              = s->flags;
+
+    for (i = 0; i < s->nb_streams; i++) {
+        AVStream *st;
+        AVCodecParameters *ipar, *opar;
+
+        if (!(st = avformat_new_stream(oc, NULL)))
+            return AVERROR(ENOMEM);
+        ipar = s->streams[i]->codecpar;
+        opar = st->codecpar;
+        avcodec_parameters_copy(opar, ipar);
+        if (!oc->oformat->codec_tag ||
+            av_codec_get_id (oc->oformat->codec_tag, ipar->codec_tag) == opar->codec_id ||
+            av_codec_get_tag(oc->oformat->codec_tag, ipar->codec_id) <= 0) {
+            opar->codec_tag = ipar->codec_tag;
+        } else {
+            opar->codec_tag = 0;
+        }
+        st->sample_aspect_ratio = s->streams[i]->sample_aspect_ratio;
+        st->time_base = s->streams[i]->time_base;
+        av_dict_copy(&st->metadata, s->streams[i]->metadata, 0);
+    }
+    
+
+    return 0;
+}
+
+
+static int cseg_start(AVFormatContext *s)
+{
+    CachedSegmentContext *cseg = s->priv_data;
+    AVFormatContext *oc = cseg->avf;
+    int err = 0;
+    AVIOContext *avio_out = NULL;
+    CachedSegment * segment = NULL;
+    
+
+    segment = get_free_segment(cseg);
+    if(!segment){
+        err = AVERROR(ENOMEM);
+        return err;      
+    }
+    
+    avio_out = avio_alloc_context(cseg->out_buffer, SEGMENT_IO_BUFFER_SIZE,
+                                  1, segment, NULL, &write_segment, NULL);
+    if (!avio_out) {
+        recycle_free_segment(cseg, segment);
+        err = AVERROR(ENOMEM);
+        return err;
+    }
+
+    avio_out->direct = 1; //direct IO to segment
+    oc->pb = avio_out;  
+    oc->flags |= AVFMT_FLAG_CUSTOM_IO;
+    cseg->cur_segment = segment;
+    cseg->number++;   
+    segment->sequence = cseg->sequence++;
+
+    if (oc->oformat->priv_class && oc->priv_data)
+        av_opt_set(oc->priv_data, "mpegts_flags", "resend_headers", 0);
+
+    return 0;
+}
+
+
+
+static int cseg_write_header(AVFormatContext *s)
+{
+    CachedSegmentContext *cseg = s->priv_data;
+    int ret, i;
+    AVDictionary *options = NULL;
+    
+    pthread_mutex_init(&cseg->mutex, NULL);
+    pthread_cond_init(&cseg->not_empty, NULL);
+    cseg->sequence       = cseg->start_sequence;
+    cseg->recording_time = cseg->time * AV_TIME_BASE;
+    cseg->start_dts = AV_NOPTS_VALUE;
+    cseg->start_pos = 0;
+    cseg->number = 0;
+    cseg->consumer_exit_code = 0;
+    cseg->correct_delta = AV_NOPTS_VALUE;
+    cseg->correct_start_dts = AV_NOPTS_VALUE;
+
+    if (cseg->format_options_str) {
+        ret = av_dict_parse_string(&cseg->format_options, cseg->format_options_str, "=", ":", 0);
+        if (ret < 0) {
+            av_log(s, AV_LOG_ERROR, "Could not parse format options list '%s'\n", cseg->format_options_str);
+            av_dict_free(&cseg->format_options);
+            goto fail;
+        }
+    }
+
+    for (i = 0; i < s->nb_streams; i++) {
+        cseg->has_video +=
+            s->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO;
+        cseg->has_subtitle +=
+            s->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE;
+    }
+
+    if (cseg->has_video > 1)
+        av_log(s, AV_LOG_WARNING,
+               "More than a single video stream present, "
+               "expect issues decoding it.\n");
+    if(cseg->has_subtitle){
+        av_log(s, AV_LOG_ERROR,
+               "Not support subtitle stream\n");    
+        ret = AVERROR_PATCHWELCOME;
+        goto fail;        
+    }
+    
+    if(cseg->time < 1.0){
+        av_log(s, AV_LOG_ERROR,
+               "segment time cannot be less than 1.0 second\n");    
+        ret = AVERROR_INVALIDDATA;
+        goto fail;          
+    }
+
+    cseg->oformat = av_guess_format("mpegts", NULL, NULL);
+    if (!cseg->oformat) {
+        ret = AVERROR_MUXER_NOT_FOUND;
+        goto fail;
+    }
+
+    cseg->filename = av_strdup(s->url);
+    cseg->out_buffer = av_malloc(SEGMENT_IO_BUFFER_SIZE);
+    init_segment_list(&cseg->cached_list);
+    init_segment_list(&cseg->free_list);   
+    cseg->last_mux_dts = (int64_t *)av_malloc(sizeof(int64_t) * s->nb_streams);
+    for (i = 0; i < s->nb_streams; i++) {
+        cseg->last_mux_dts[i] = AV_NOPTS_VALUE;
+    }
+
+    if ((ret = cseg_mux_init(s)) < 0)
+        goto fail;
+
+    if ((ret = cseg_start(s)) < 0)
+        goto fail;
+
+    av_dict_copy(&options, cseg->format_options, 0);
+    ret = avformat_write_header(cseg->avf, &options);
+    if (av_dict_count(options)) {
+        av_log(s, AV_LOG_ERROR, "Some of provided format options in '%s' are not recognized\n", cseg->format_options_str);
+        ret = AVERROR(EINVAL);
+        goto fail;
+    }
+    //av_assert0(s->nb_streams == cseg->avf->nb_streams);
+    for (i = 0; i < s->nb_streams; i++) {
+        AVStream *inner_st = cseg->avf->streams[i];
+        AVStream *outer_st = s->streams[i];
+        avpriv_set_pts_info(outer_st, inner_st->pts_wrap_bits, inner_st->time_base.num, inner_st->time_base.den);
+    }
+    
+    //find writer
+    cseg->writer = find_segment_writer(cseg->filename);
+    if(!cseg->writer){
+        av_log(s, AV_LOG_ERROR, "No writer found for url:%s\n", cseg->filename);
+        ret = AVERROR_MUXER_NOT_FOUND;
+        goto fail;
+    }
+    if(cseg->writer->init){
+        ret = cseg->writer->init(cseg);
+        if(ret<0){
+            av_log(s, AV_LOG_ERROR, "Writer(%s) init failed for url:%s\n", 
+            cseg->writer->name,
+            cseg->filename);  
+            cseg->writer = NULL;
+            goto fail;
+        }
+    }   
+    
+    //successful write header, start consumer
+    cseg->consumer_active = 1;
+    cseg->consumer_exit_code = 0;
+    ret = pthread_create(&(cseg->consumer_thread_id), NULL, consumer_routine, cseg);
+    if(ret){
+        av_log(s, AV_LOG_ERROR, "Start consumer thread failed");
+        ret = AVERROR(ret);
+        cseg->consumer_active = 0;
+        cseg->consumer_thread_id  = 0;
+        goto fail;
+    }    
+    
+fail:
+    av_dict_free(&options);
+    if (ret < 0) {
+        if(cseg->writer){
+            if(cseg->writer->uninit){
+                cseg->writer->uninit(cseg);
+            }
+            cseg->writer = NULL;
+        }
+        
+        if (cseg->avf){
+            AVFormatContext *oc = cseg->avf;
+            if(oc->pb){
+                av_freep(&(oc->pb));
+            }
+            avformat_free_context(cseg->avf);
+        }
+        if(cseg->cur_segment){
+            cached_segment_free(cseg->cur_segment);
+            cseg->cur_segment = NULL;
+        }
+        if(cseg->out_buffer != NULL){
+            av_freep(&cseg->out_buffer);
+        }
+        
+        if(cseg->last_mux_dts != NULL){
+            av_freep(&cseg->last_mux_dts);
+        }
+        
+        av_freep(&cseg->filename);
+        
+        if(cseg->format_options){
+            av_dict_free(&cseg->format_options);            
+        }
+        pthread_cond_destroy(&cseg->not_empty);
+        pthread_mutex_destroy(&cseg->mutex);        
+    }
+    return ret;
+}
+
+
+static int cseg_write_packet(AVFormatContext *s, AVPacket *pkt)
+{
+    CachedSegmentContext *cseg = (CachedSegmentContext *)s->priv_data;
+    AVFormatContext *oc = cseg->avf;
+    AVStream *st = s->streams[pkt->stream_index];
+    int64_t * last_mux_dts = cseg->last_mux_dts + pkt->stream_index;
+    int64_t end_pts = cseg->recording_time * cseg->number;
+    int is_ref_pkt = 1;
+    int ret, can_split = 1;
+    int stream_index = 0;
+
+    stream_index = pkt->stream_index;
+    
+    if(cseg->consumer_exit_code){
+        //consumer error
+/*
+        av_log(s, AV_LOG_ERROR, 
+               "Consumer Error:%s\n",
+               cseg->consumer_err_str[0] == 0?
+               "unknown":cseg->consumer_err_str); 
+*/
+        return cseg->consumer_exit_code;
+    }
+    
+    if(cseg->cur_segment == NULL){
+        //no current segment
+        return AVERROR_EXIT;
+    }
+    
+    //terminated if extradata has been changed
+    if(pkt->flags & AV_PKT_FLAG_KEY){
+        int side_size = 0;
+        uint8_t * side = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, &side_size);
+        if(side != NULL){
+            if(side_size != st->codecpar->extradata_size || 
+               memcmp(side, st->codecpar->extradata, side_size) != 0){
+                av_log(s, AV_LOG_ERROR, 
+                        "Not suppot for extradata change when recording mpegts\n");      
+                return AVERROR_EXIT;
+            }
+        }//if(side != NULL)
+    }//if(pkt->flags & AV_PKT_FLAG_KEY)
+
+
+    // correct dts if enabled
+    // dts correct algorithm is used to avoid the dts discontinue between segments 
+    // even if there are some "holes" in them
+    if(cseg->correct_delta != AV_NOPTS_VALUE && pkt->dts != AV_NOPTS_VALUE){
+        pkt->dts += cseg->correct_delta;
+        if(pkt->pts != AV_NOPTS_VALUE){
+            pkt->pts += cseg->correct_delta;        
+        }
+    }
+    
+
+    if (cseg->start_dts == AV_NOPTS_VALUE) {
+        //check if the first packet must be the key video frame
+        if(cseg->has_video){
+            if(st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO ||
+                (pkt->flags & AV_PKT_FLAG_KEY) == 0){
+                //drop the audio frame or non-key video frame
+                return 0;
+            }
+        }
+        //check if the first packet dts is valid or not
+        if(pkt->dts == AV_NOPTS_VALUE){
+            return 0;
+        }
+        
+        //this is the first valid packet to handle
+        
+        // enabled the dts correct algorithm if configured
+        if(cseg->correct_start_dts != AV_NOPTS_VALUE){
+            cseg->correct_delta = cseg->correct_start_dts - pkt->dts;
+            pkt->dts += cseg->correct_delta;
+            if(pkt->pts != AV_NOPTS_VALUE){
+                pkt->pts += cseg->correct_delta;        
+            }            
+        }
+
+        //start_pts is ready, check start_ts
+        if(cseg->start_ts < 0.0){
+            //get current time for start ts
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            if(tv.tv_sec < 31536000){   //not valid
+                av_log(s, AV_LOG_ERROR, 
+                        "gettimeofday error, the timestamp is invalid\n");                     
+                return AVERROR_EXIT;
+            }
+            cseg->start_ts = (double)tv.tv_sec + ((double)tv.tv_usec) / 1000000.0;
+        }//if(cseg->start_ts < 0.0){
+
+        cseg->start_dts = pkt->dts;     
+        
+    }else{//if (cseg->start_pts == AV_NOPTS_VALUE) {
+        // for the non-first packet, check its dts valid
+        if(pkt->dts < cseg->start_dts){
+            return 0;
+        }      
+    }
+        
+    //set start_pts & start_ts for the current segment if absent
+    if(cseg->cur_segment->start_dts == AV_NOPTS_VALUE){
+        cseg->cur_segment->start_dts = pkt->dts;
+        if(cseg->cur_segment->start_dts != AV_NOPTS_VALUE && 
+           cseg->cur_segment->start_ts <= 0.0){
+            cseg->cur_segment->start_ts = cseg->start_ts;          
+        }        
+    }
+    
+    //correct dts/pts in case of non-strict monotonous
+    if( (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) &&
+        pkt->dts != AV_NOPTS_VALUE &&
+        (*last_mux_dts) != AV_NOPTS_VALUE) {
+        int64_t max = (*last_mux_dts) + 1;
+        if (pkt->dts < max) {
+            int loglevel = max - pkt->dts > 2 || st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO ? AV_LOG_WARNING : AV_LOG_DEBUG;
+            av_log(s, loglevel, "Non-monotonous DTS in output stream "
+                   "%d; previous: %"PRId64", current: %"PRId64"; ", 
+                   st->index, (*last_mux_dts), pkt->dts);
+            av_log(s, loglevel, "changing to %"PRId64". This may result "
+                   "in incorrect timestamps in the output file.\n",
+                   max);
+            if(pkt->pts >= pkt->dts)
+                pkt->pts = FFMAX(pkt->pts, max);
+            pkt->dts = max;
+        }
+    }
+    (*last_mux_dts) = pkt->dts;
+    
+   
+    if (cseg->has_video) {
+        can_split = st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+                    pkt->flags & AV_PKT_FLAG_KEY;
+        is_ref_pkt = st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO;
+    }
+    
+    if (pkt->dts == AV_NOPTS_VALUE)
+        is_ref_pkt = can_split = 0;
+
+    if (can_split && av_compare_ts(pkt->dts - cseg->start_dts, st->time_base,
+                                   end_pts, AV_TIME_BASE_Q) >= 0) {
+        int64_t cur_segment_size = 0;
+        int64_t cur_segment_start_dts;
+        av_write_frame(oc, NULL); /* Flush any buffered data */
+/*        
+        printf("pts:%lld, start_pts:%lld, end_pts:%lld, split_end_pts:%lld\n",
+               (long long)pkt->pts, (long long)cseg->start_pts, (long long)cseg->end_pts, (long long)end_pts);
+*/
+        if (oc->pb) {            
+            avio_flush(oc->pb);
+            av_freep(&(oc->pb)); 
+        }
+        // terminate the current segment
+        cur_segment_size = cseg->cur_segment->size;
+
+        //correct the duration and next_dts according to the current key frame
+        cseg->cur_segment->duration = (double)(pkt->dts - cseg->cur_segment->start_dts)
+                                   * st->time_base.num / st->time_base.den;
+        cseg->cur_segment->next_dts = pkt->dts;        
+        
+        cur_segment_start_dts = cseg->cur_segment->start_dts;
+        
+        ret = append_cur_segment(s); // lose the control of cseg->cur_segment
+        if (ret < 0)
+            return ret;   
+        else if(ret == SEGMENT_HAS_DROPED && cseg->correct_delta != AV_NOPTS_VALUE){
+            //if the segment has been droped, start new segment with its timestamp
+            cseg->correct_delta += cur_segment_start_dts - pkt->dts;
+            if(pkt->pts != AV_NOPTS_VALUE){
+                pkt->pts += cur_segment_start_dts - pkt->dts;        
+            }  
+            pkt->dts = cur_segment_start_dts;
+        }
+        cseg->start_pos += cur_segment_size;       
+       
+        //init new segment
+        ret = cseg_start(s);
+        if (ret < 0)
+            return ret;
+        cseg->cur_segment->start_ts = ((double)(pkt->dts - cseg->start_dts))
+                                            * st->time_base.num / st->time_base.den + cseg->start_ts;        
+        cseg->cur_segment->pos = cseg->start_pos;
+        cseg->cur_segment->start_dts = pkt->dts;
+        cseg->cur_segment->duration = 0.0;
+        
+    }//if (can_split && av_compare_ts(pkt->pts - cseg->start_pts, st->time_base,
+    
+    ret = ff_write_chained(oc, stream_index, pkt, s, 0);
+    if(ret < 0){
+        av_log(s, AV_LOG_ERROR, "Write packet failed\n");
+        return ret;
+    }
+    
+    //after writing packet, update the duration for current segment
+    if (is_ref_pkt){
+        //av_log(s, AV_LOG_ERROR, "packet duration: %lld\n", (long long)pkt->duration);
+        if(pkt->duration){            
+            cseg->cur_segment->next_dts = pkt->dts  + pkt->duration;              
+        }else{
+            cseg->cur_segment->next_dts = pkt->dts + 
+                st->time_base.den / st->time_base.num / 25 /*fps*/;
+        }
+        cseg->cur_segment->duration = 
+            (double)(cseg->cur_segment->next_dts - cseg->cur_segment->start_dts)
+                                   * st->time_base.num / st->time_base.den;
+    }
+
+    return ret;
+}
+
+static int cseg_write_trailer(struct AVFormatContext *s)
+{
+     
+    CachedSegmentContext *cseg = s->priv_data;
+    AVFormatContext *oc = cseg->avf;
+ 
+    av_write_trailer(oc);
+
+    if (oc->pb) {
+
+         
+        avio_flush(oc->pb);
+        av_freep(&(oc->pb));
+        
+        pthread_mutex_lock(&cseg->mutex);
+        if((cseg->flags & CSEG_FLAG_NONBLOCK) && (cseg->cached_list.seg_num >= cseg->max_nb_segments)){
+            if(cseg->cur_segment != NULL){
+                cached_segment_reset(cseg->cur_segment);
+                put_segment_list(&(cseg->free_list), cseg->cur_segment);
+                cseg->cur_segment = NULL;                
+            }
+            pthread_mutex_unlock(&cseg->mutex); 
+            
+//Jam(2018-01-12): remove this logic, keep the first and unfinished segment
+/*            
+        }else if(cseg->number <= 1){
+            //Jam(2016-07-12): if cseg->number equals 1, 
+            // means the current segment is the first segment and has not finished,
+            // don't write this single unfinished segment to avoid record fragmentation
+
+            if(cseg->cur_segment != NULL){
+                cached_segment_reset(cseg->cur_segment);
+                put_segment_list(&(cseg->free_list), cseg->cur_segment);
+                cseg->cur_segment = NULL;                
+            }
+            pthread_mutex_unlock(&cseg->mutex);   
+            av_log(s, AV_LOG_ERROR,
+                    "drop the current single unfinished segment\n");           
+*/ 
+
+        }else{
+            
+            pthread_mutex_unlock(&cseg->mutex);  
+            append_cur_segment(s); // lose the control of cseg->cur_segment            
+        }
+    }//if (oc->pb) {
+          
+    if(cseg->consumer_thread_id != 0){
+        void * res;
+        int ret;
+        pthread_mutex_lock(&cseg->mutex); 
+        cseg->consumer_active = 0;          
+        pthread_cond_signal(&cseg->not_empty); //wakeup comsumer
+        pthread_mutex_unlock(&cseg->mutex);  
+                
+        ret = pthread_join(cseg->consumer_thread_id, &res);
+        if (ret != 0){
+            av_log(s, AV_LOG_ERROR, "stop consumer thread failed\n");
+        }
+        cseg->consumer_thread_id = 0;
+        
+    }
+    
+    if(cseg->writer){
+        if(cseg->writer->uninit){
+            cseg->writer->uninit(cseg);
+        }
+        cseg->writer = NULL;
+    }    
+
+    avformat_free_context(oc);
+    cseg->avf = NULL;
+
+    free_segment_list(&(cseg->cached_list));
+    free_segment_list(&(cseg->free_list));
+
+    av_freep(&cseg->filename);
+ 
+    if(cseg->out_buffer != NULL){
+        av_freep(&cseg->out_buffer);
+    }   
+
+    if(cseg->last_mux_dts != NULL){
+        av_freep(&cseg->last_mux_dts);
+    }    
+    
+    if(cseg->format_options){
+        av_dict_free(&cseg->format_options);            
+    }    
+    pthread_cond_destroy(&cseg->not_empty);
+    pthread_mutex_destroy(&cseg->mutex); 
+   
+    return 0;
+}
+
+#define OFFSET(x) offsetof(CachedSegmentContext, x)
+#define E AV_OPT_FLAG_ENCODING_PARAM
+static const AVOption options[] = {
+    {"fallocate_size",  "set fallocate size for ivr writer",        OFFSET(fallocate_size),AV_OPT_TYPE_INT64,  {.i64 = 0},     0, INT64_MAX, E},
+    {"start_number",  "set first number in the sequence",        OFFSET(start_sequence),AV_OPT_TYPE_INT64,  {.i64 = 0},     0, INT64_MAX, E},
+    {"cseg_time",      "set segment length in seconds",           OFFSET(time),    AV_OPT_TYPE_DOUBLE,  {.dbl = 10},     0, FLT_MAX, E},
+    {"cseg_list_size", "set maximum number of the cache list",  OFFSET(max_nb_segments),    AV_OPT_TYPE_INT,    {.i64 = 3},     1, INT_MAX, E},
+    {"cseg_ts_options","set hls mpegts list of options for the container format used for hls", OFFSET(format_options_str), AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,    E},
+    {"cseg_seg_size",  "set maximum segment size in bytes",        OFFSET(max_seg_size),AV_OPT_TYPE_INT,  {.i64 = 10485760},     0, INT_MAX, E},
+    {"start_ts",      "set start timestamp (in seconds) for the first segment", OFFSET(start_ts),    AV_OPT_TYPE_DOUBLE,  {.dbl = -1.0},     -1.0, DBL_MAX, E},
+    {"cseg_cache_time", "set min cache time in seconds for writer pause", OFFSET(pre_recoding_time),    AV_OPT_TYPE_DOUBLE,  {.dbl = 0},     0, DBL_MAX, E},
+    {"use_localtime",          "set filename expansion with strftime at segment creation", OFFSET(use_localtime), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 1, E },
+    {"writer_timeout",     "set timeout (in milliseconds) of writer I/O operations", OFFSET(writer_timeout),     AV_OPT_TYPE_INT, { .i64 = 30000 },         -1, INT_MAX, .flags = E },
+    {"cseg_flags",     "set flags affecting cached segement working policy", OFFSET(flags), AV_OPT_TYPE_FLAGS, {.i64 = 0 }, 0, UINT_MAX, E, "flags"},
+    {"nonblock",   "never blocking in the write_packet() when the cached list is full, instead, dicard the eariest segment", 0, AV_OPT_TYPE_CONST, {.i64 = CSEG_FLAG_NONBLOCK }, 0, UINT_MAX,   E, "flags"},
+
+    { NULL },
+};
+
+static const AVClass cseg_class = {
+    .class_name = "cseg muxer",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
+
+
+AVOutputFormat ff_cseg_muxer = {
+    .name           = "cseg",
+    .long_name      = NULL_IF_CONFIG_SMALL("OpenSight cached segment muxer"),
+    .priv_data_size = sizeof(CachedSegmentContext),
+    .audio_codec    = AV_CODEC_ID_AAC,
+    .video_codec    = AV_CODEC_ID_H264,
+    .flags          = AVFMT_NOFILE | AVFMT_ALLOW_FLUSH | AVFMT_TS_NONSTRICT,
+    .write_header   = cseg_write_header,
+    .write_packet   = cseg_write_packet,
+    .write_trailer  = cseg_write_trailer,
+    .priv_class     = &cseg_class,
+};

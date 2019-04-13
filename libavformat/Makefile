@@ -322,6 +322,9 @@ OBJS-$(CONFIG_MPEG2VOB_MUXER)            += mpegenc.o
 OBJS-$(CONFIG_MPEGPS_DEMUXER)            += mpeg.o
 OBJS-$(CONFIG_MPEGTS_DEMUXER)            += mpegts.o
 OBJS-$(CONFIG_MPEGTS_MUXER)              += mpegtsenc.o
+OBJS-$(CONFIG_CSEG_MUXER)                += cached_segment.o cseg_writers/cJSON.o \
+                                            cseg_writers/cseg_dummy_writer.o cseg_writers/cseg_file_writer.o \
+                                            cseg_writers/cseg_ivr_writer.o
 OBJS-$(CONFIG_MPEGVIDEO_DEMUXER)         += mpegvideodec.o rawdec.o
 OBJS-$(CONFIG_MPJPEG_DEMUXER)            += mpjpegdec.o
 OBJS-$(CONFIG_MPJPEG_MUXER)              += mpjpeg.o

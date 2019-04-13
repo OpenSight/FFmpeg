@@ -306,6 +306,7 @@ External library support:
   --enable-opengl          enable OpenGL rendering [no]
   --enable-openssl         enable openssl, needed for https support
                            if gnutls, libtls or mbedtls is not used [no]
+  --enable-libcurl         enable libcurl support on which cseg muxer depends [no]
   --disable-sndio          disable sndio support [autodetect]
   --disable-schannel       disable SChannel SSP, needed for TLS support on
                            Windows if openssl and gnutls are not used [autodetect]
@@ -1761,6 +1762,7 @@ EXTERNAL_LIBRARY_LIST="
     openal
     opengl
     vapoursynth
+    libcurl
 "
 
 HWACCEL_AUTODETECT_LIBRARY_LIST="
@@ -3178,6 +3180,8 @@ fifo_muxer_deps="threads"
 flac_demuxer_select="flac_parser"
 hds_muxer_select="flv_muxer"
 hls_muxer_select="mpegts_muxer"
+cseg_muxer_select="mpegts_muxer"
+cseg_muxer_suggest="libcurl"
 hls_muxer_suggest="gcrypt openssl"
 image2_alias_pix_demuxer_select="image2_demuxer"
 image2_brender_pix_demuxer_select="image2_demuxer"
@@ -6126,6 +6130,7 @@ enabled libopus           && {
 enabled libpulse          && require_pkg_config libpulse libpulse pulse/pulseaudio.h pa_context_new
 enabled librsvg           && require_pkg_config librsvg librsvg-2.0 librsvg-2.0/librsvg/rsvg.h rsvg_handle_render_cairo
 enabled librtmp           && require_pkg_config librtmp librtmp librtmp/rtmp.h RTMP_Socket
+enabled libcurl           && require_pkg_config libcurl libcurl curl/curl.h curl_easy_init
 enabled librubberband     && require_pkg_config librubberband "rubberband >= 1.8.1" rubberband/rubberband-c.h rubberband_new -lstdc++ && append librubberband_extralibs "-lstdc++"
 enabled libshine          && require_pkg_config libshine shine shine/layer3.h shine_encode_buffer
 enabled libsmbclient      && { check_pkg_config libsmbclient smbclient libsmbclient.h smbc_init ||
