@@ -99,6 +99,10 @@ int opt_default(void *optctx, const char *opt, const char *arg);
  */
 int opt_loglevel(void *optctx, const char *opt, const char *arg);
 
+#if CONFIG_FFMPEG_IVR
+int opt_null(void *optctx, const char *opt, const char *arg);
+#endif
+
 int opt_report(const char *opt);
 
 int opt_max_alloc(void *optctx, const char *opt, const char *arg);
@@ -212,6 +216,15 @@ void show_help_options(const OptionDef *options, const char *msg, int req_flags,
 #define CMDUTILS_COMMON_OPTIONS_AVDEVICE
 #endif
 
+#if CONFIG_FFMPEG_IVR
+#define CMDUTILS_COMMON_OPTIONS_IVR                                                                                     \
+    { "log_rotate" , HAS_ARG,            { .func_arg = opt_null},                                                       \
+      "set auto-rotate logger params", "FILENAME:SIZE:ROTATE_NUM" },                                                    \
+      
+#else
+#define CMDUTILS_COMMON_OPTIONS_IVR
+#endif
+
 #define CMDUTILS_COMMON_OPTIONS                                                                                         \
     { "L",           OPT_EXIT,             { .func_arg = show_license },     "show license" },                          \
     { "h",           OPT_EXIT,             { .func_arg = show_help },        "show help", "topic" },                    \
@@ -234,13 +247,14 @@ void show_help_options(const OptionDef *options, const char *msg, int req_flags,
     { "layouts",     OPT_EXIT,             { .func_arg = show_layouts },     "show standard channel layouts" },         \
     { "sample_fmts", OPT_EXIT,             { .func_arg = show_sample_fmts }, "show available audio sample formats" },   \
     { "colors",      OPT_EXIT,             { .func_arg = show_colors },      "show available color names" },            \
-    { "loglevel",    HAS_ARG,              { .func_arg = opt_loglevel },     "set logging level", "loglevel" },         \
+    { "loglevel",    HAS_ARG,              { .func_arg = opt_loglevel },     "set logging level", "loglevel" },         \  
     { "v",           HAS_ARG,              { .func_arg = opt_loglevel },     "set logging level", "loglevel" },         \
     { "report",      0,                    { (void*)opt_report },            "generate a report" },                     \
     { "max_alloc",   HAS_ARG,              { .func_arg = opt_max_alloc },    "set maximum size of a single allocated block", "bytes" }, \
     { "cpuflags",    HAS_ARG | OPT_EXPERT, { .func_arg = opt_cpuflags },     "force specific cpu flags", "flags" },     \
     { "hide_banner", OPT_BOOL | OPT_EXPERT, {&hide_banner},     "do not show program banner", "hide_banner" },          \
     CMDUTILS_COMMON_OPTIONS_AVDEVICE                                                                                    \
+    CMDUTILS_COMMON_OPTIONS_IVR                                                                                         \
 
 /**
  * Show help for all options with given flags in class and all its
@@ -382,6 +396,13 @@ void uninit_parse_context(OptionParseContext *octx);
  */
 void parse_loglevel(int argc, char **argv, const OptionDef *options);
 
+
+#if CONFIG_FFMPEG_IVR
+/**
+ * Find the '-log_rotate' option in the command line args and apply it.
+ */
+int parse_log_rotate(int argc, char **argv, const OptionDef *options);
+#endif
 /**
  * Return index of option opt in argv or 0 if not found.
  */

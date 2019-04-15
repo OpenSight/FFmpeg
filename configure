@@ -403,6 +403,7 @@ Advanced options (experts only):
   --custom-allocator=NAME  use a supported custom allocator
   --disable-symver         disable symbol versioning
   --enable-hardcoded-tables use hardcoded tables instead of runtime generation
+  --enable-ffmpeg-ivr      enable IVR extension to ffmpeg program
   --disable-safe-bitstream-reader
                            disable buffer boundary checking in bitreaders
                            (faster, but may crash)
@@ -1821,6 +1822,7 @@ FEATURE_LIST="
     small
     static
     swscale_alpha
+    ffmpeg_ivr
 "
 
 # this list should be kept in linking order
@@ -3181,6 +3183,7 @@ flac_demuxer_select="flac_parser"
 hds_muxer_select="flv_muxer"
 hls_muxer_select="mpegts_muxer"
 cseg_muxer_select="mpegts_muxer"
+cseg_muxer_deps="pthreads"
 cseg_muxer_suggest="libcurl"
 hls_muxer_suggest="gcrypt openssl"
 image2_alias_pix_demuxer_select="image2_demuxer"
@@ -7040,6 +7043,7 @@ echo "perl enabled              ${perl-no}"
 echo "pod2man enabled           ${pod2man-no}"
 echo "makeinfo enabled          ${makeinfo-no}"
 echo "makeinfo supports HTML    ${makeinfo_html-no}"
+echo "ffmpeg ivr extension      ${ffmpeg_ivr-no}"
 test -n "$random_seed" &&
     echo "random seed               ${random_seed}"
 echo

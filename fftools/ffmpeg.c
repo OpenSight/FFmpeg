@@ -4863,7 +4863,12 @@ int main(int argc, char **argv)
         argc--;
         argv++;
     }
-
+#if CONFIG_FFMPEG_IVR
+    if(parse_log_rotate(argc, argv, options)){
+        //if rotate logging is enabled, disable state report
+        print_stats = 0; 
+    }
+#endif
 #if CONFIG_AVDEVICE
     avdevice_register_all();
 #endif
@@ -4915,7 +4920,10 @@ int main(int argc, char **argv)
            decode_error_stat[0], decode_error_stat[1]);
     if ((decode_error_stat[0] + decode_error_stat[1]) * max_error_rate < decode_error_stat[1])
         exit_program(69);
-
+#if CONFIG_FFMPEG_IVR
+    exit_program(received_nb_signals ? 0 : main_return_code);
+#else
     exit_program(received_nb_signals ? 255 : main_return_code);
+#endif
     return main_return_code;
 }
