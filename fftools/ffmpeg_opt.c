@@ -117,6 +117,7 @@ int input_io_timeout = 0;   //default is 0, disable input io timeout check
 int64_t output_io_bw = 0;    //default is 0, disable IO bandwhich contrial, unit is Bytes/s
 int64_t cur_sec = 0;
 int64_t cur_bytes = 0;
+int force_dts_monotonicity = 0;
 #endif
 
 static int intra_only         = 0;
@@ -3367,6 +3368,8 @@ const OptionDef options[] = {
         "the max io time (in milliseconds) for read a packet from input file, default is 0 means disabled", "msec" },   
     { "output_io_bw",         HAS_ARG | OPT_INT | OPT_EXPERT,              { &output_io_bw },
         "the max io bandwidth (in Bytes/sec) for writing to the output file, default is 0 means disabled", "Bytes/sec" },  
+    { "force_dts_monotonicity", OPT_BOOL | OPT_EXPERT,               { &force_dts_monotonicity },
+        "correct dts monotonicity errors" },
 #endif           
     { "y",              OPT_BOOL,                                    {              &file_overwrite },
         "overwrite output files" },

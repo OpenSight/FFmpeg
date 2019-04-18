@@ -631,6 +631,7 @@ extern int input_io_timeout;
 extern int64_t output_io_bw;
 extern int64_t cur_sec;
 extern int64_t cur_bytes;
+extern int force_dts_monotonicity;
 int input_interrupt_cb(void *arg);
 void input_start_io(InputFile *f);
 void input_stop_io(InputFile *f);

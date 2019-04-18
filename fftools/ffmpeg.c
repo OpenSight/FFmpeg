@@ -4526,7 +4526,12 @@ static int process_input(int file_index)
     if ((ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO ||
          ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) &&
         pkt_dts != AV_NOPTS_VALUE && ist->next_dts == AV_NOPTS_VALUE && !copy_ts
-        && (is->iformat->flags & AVFMT_TS_DISCONT) && ifile->last_ts != AV_NOPTS_VALUE) {
+        && (is->iformat->flags & AVFMT_TS_DISCONT) && ifile->last_ts != AV_NOPTS_VALUE
+#if CONFIG_FFMPEG_IVR
+        && !force_dts_monotonicity) {
+#else
+        ) {
+#endif
         int64_t delta   = pkt_dts - ifile->last_ts;
         if (delta < -1LL*dts_delta_threshold*AV_TIME_BASE ||
             delta >  1LL*dts_delta_threshold*AV_TIME_BASE){
@@ -4554,7 +4559,11 @@ static int process_input(int file_index)
     if ((ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO ||
          ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) &&
          pkt_dts != AV_NOPTS_VALUE && ist->next_dts != AV_NOPTS_VALUE &&
+#if CONFIG_FFMPEG_IVR         
+        !copy_ts && !force_dts_monotonicity) { 
+#else        
         !copy_ts) {
+#endif        
         int64_t delta   = pkt_dts - ist->next_dts;
         if (is->iformat->flags & AVFMT_TS_DISCONT) {
             if (delta < -1LL*dts_delta_threshold*AV_TIME_BASE ||
@@ -4586,6 +4595,31 @@ static int process_input(int file_index)
         }
     }
 
+#if CONFIG_FFMPEG_IVR    
+    pkt_dts = av_rescale_q_rnd(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+    if (force_dts_monotonicity &&
+        pkt_dts != AV_NOPTS_VALUE &&
+        ist->dts != AV_NOPTS_VALUE &&
+        (ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO || ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)) {
+        // adjust the incoming packet by the accumulated monotonicity error
+
+        int64_t delta = pkt_dts - ist->dts;
+        if(delta < 0 || delta > 1LL*dts_delta_threshold*AV_TIME_BASE){
+            if(ist->next_dts != AV_NOPTS_VALUE){
+                delta   = pkt_dts - ist->next_dts;
+            }else{
+                delta   = pkt_dts - ist->dts + 1000;            
+            }
+            ifile->ts_offset -= delta;
+            av_log(NULL, AV_LOG_WARNING,
+                       "timestamp discontinuity %"PRId64", new offset= %"PRId64"\n",
+                       delta, ifile->ts_offset);
+            pkt.dts -= av_rescale_q(delta, AV_TIME_BASE_Q, ist->st->time_base);
+            if (pkt.pts != AV_NOPTS_VALUE)
+                pkt.pts -= av_rescale_q(delta, AV_TIME_BASE_Q, ist->st->time_base);            
+        }      
+    }
+#endif    
     if (pkt.dts != AV_NOPTS_VALUE)
         ifile->last_ts = av_rescale_q(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q);
 
