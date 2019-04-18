@@ -419,6 +419,11 @@ typedef struct InputFile {
     int joined;                 /* the thread has been joined */
     int thread_queue_size;      /* maximum number of queued packets */
 #endif
+
+#if CONFIG_FFMPEG_IVR
+    struct timespec io_start_ts;    
+#endif
+
 } InputFile;
 
 enum forced_keyframes_const {
@@ -621,6 +626,15 @@ extern char *qsv_device;
 #endif
 extern HWDevice *filter_hw_device;
 
+#if CONFIG_FFMPEG_IVR
+extern int input_io_timeout;
+extern int64_t output_io_bw;
+extern int64_t cur_sec;
+extern int64_t cur_bytes;
+int input_interrupt_cb(void *arg);
+void input_start_io(InputFile *f);
+void input_stop_io(InputFile *f);
+#endif
 
 void term_init(void);
 void term_exit(void);

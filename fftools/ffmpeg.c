@@ -106,6 +106,10 @@
 
 #include "libavutil/avassert.h"
 
+#if CONFIG_FFMPEG_IVR
+#include "ivr_rotate_logger.h"
+#endif
+
 const char program_name[] = "ffmpeg";
 const int program_birth_year = 2000;
 
@@ -473,6 +477,29 @@ static int read_key(void)
     return -1;
 }
 
+#if CONFIG_FFMPEG_IVR
+int input_interrupt_cb(void *arg)
+{
+    InputFile *f = (InputFile *)arg;
+    if(received_nb_signals > transcode_init_done){
+        return 1;
+    }
+    
+    if(input_io_timeout > 0 && f != NULL && f->io_start_ts.tv_sec != 0){
+        struct timespec cur_ts;
+        clock_gettime(CLOCK_MONOTONIC, &cur_ts);
+        uint64_t io_dur = (cur_ts.tv_sec - f->io_start_ts.tv_sec) * 1000 +
+              (cur_ts.tv_nsec - f->io_start_ts.tv_nsec) / 1000000;       
+        if(io_dur >= (uint64_t)input_io_timeout){
+            av_log(NULL, AV_LOG_ERROR, "Input IO Timeout( >=%d ms)\n", input_io_timeout);
+            return 1;
+        }
+    }    
+    return 0;
+}
+#endif
+
+
 static int decode_interrupt_cb(void *ctx)
 {
     return received_nb_signals > atomic_load(&transcode_init_done);
@@ -630,7 +657,11 @@ static void ffmpeg_cleanup(int ret)
         av_log(NULL, AV_LOG_INFO, "Conversion failed!\n");
     }
     term_exit();
+#if CONFIG_FFMPEG_IVR
+    rotate_logger_uninit();
+#endif        
     ffmpeg_exited = 1;
+    
 }
 
 void remove_avoptions(AVDictionary **a, AVDictionary *b)
@@ -782,7 +813,11 @@ static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int u
                 av_log(s, loglevel, "Non-monotonous DTS in output stream "
                        "%d:%d; previous: %"PRId64", current: %"PRId64"; ",
                        ost->file_index, ost->st->index, ost->last_mux_dts, pkt->dts);
+#if CONFIG_FFMPEG_IVR
+                if (exit_on_error && pkt->dts){  /*jiankai: aliyun media cdn RTMP server would produce two audio frame with 0 dts at first*/
+#else                      
                 if (exit_on_error) {
+#endif
                     av_log(NULL, AV_LOG_FATAL, "aborting.\n");
                     exit_program(1);
                 }
@@ -811,7 +846,24 @@ static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int u
                 pkt->size
               );
     }
-
+#if CONFIG_FFMPEG_IVR
+    /* IO output bandwidth control */
+    if(output_io_bw){
+        cur_bytes += pkt->size;
+        if(cur_bytes >= output_io_bw){
+            struct timespec cur_ts;
+            clock_gettime(CLOCK_MONOTONIC, &cur_ts);
+            if(cur_sec == cur_ts.tv_sec){
+                // wait for next sec
+                useconds_t left = (1000000000 - cur_ts.tv_nsec) /1000 + 1;
+                usleep(left);
+                cur_ts.tv_sec++;
+            }
+            cur_bytes = 0; 
+            cur_sec = cur_ts.tv_sec;
+        }
+    }
+#endif
     ret = av_interleaved_write_frame(s, pkt);
     if (ret < 0) {
         print_error("av_interleaved_write_frame()", ret);
@@ -4025,6 +4077,19 @@ static int check_keyboard_interaction(int64_t cur_time)
     return 0;
 }
 
+#if CONFIG_FFMPEG_IVR
+void input_start_io(InputFile *f)
+{
+    clock_gettime(CLOCK_MONOTONIC, &(f->io_start_ts));
+    
+}
+void input_stop_io(InputFile *f)
+{
+    f->io_start_ts.tv_sec = 0;
+    f->io_start_ts.tv_nsec = 0;
+}
+#endif
+
 #if HAVE_THREADS
 static void *input_thread(void *arg)
 {
@@ -4034,7 +4099,14 @@ static void *input_thread(void *arg)
 
     while (1) {
         AVPacket pkt;
+
+#if CONFIG_FFMPEG_IVR
+        input_start_io(f);
+        ret = av_read_frame(f->ctx, &pkt);        
+        input_stop_io(f);
+#else        
         ret = av_read_frame(f->ctx, &pkt);
+#endif
 
         if (ret == AVERROR(EAGAIN)) {
             av_usleep(10000);
@@ -4153,7 +4225,17 @@ static int get_input_packet(InputFile *f, AVPacket *pkt)
     if (nb_input_files > 1)
         return get_input_packet_mt(f, pkt);
 #endif
+#if CONFIG_FFMPEG_IVR
+    do{
+        int ret = 0;
+        input_start_io(f);
+        ret = av_read_frame(f->ctx, pkt);        
+        input_stop_io(f);
+        return ret;
+    }while(0);
+#else   
     return av_read_frame(f->ctx, pkt);
+#endif
 }
 
 static int got_eagain(void)

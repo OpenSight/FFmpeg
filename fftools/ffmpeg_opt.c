@@ -112,6 +112,13 @@ int filter_complex_nbthreads = 0;
 int vstats_version = 2;
 
 
+#if CONFIG_FFMPEG_IVR
+int input_io_timeout = 0;   //default is 0, disable input io timeout check
+int64_t output_io_bw = 0;    //default is 0, disable IO bandwhich contrial, unit is Bytes/s
+int64_t cur_sec = 0;
+int64_t cur_bytes = 0;
+#endif
+
 static int intra_only         = 0;
 static int file_overwrite     = 0;
 static int no_file_overwrite  = 0;
@@ -1022,6 +1029,12 @@ static int open_input_file(OptionsContext *o, const char *filename)
         print_error(filename, AVERROR(ENOMEM));
         exit_program(1);
     }
+#if CONFIG_FFMPEG_IVR
+    f = av_mallocz(sizeof(*f));
+    if (!f)
+        exit_program(1);  
+#endif        
+    
     if (o->nb_audio_sample_rate) {
         av_dict_set_int(&o->g->format_opts, "sample_rate", o->audio_sample_rate[o->nb_audio_sample_rate - 1].u.i, 0);
     }
@@ -1073,14 +1086,26 @@ static int open_input_file(OptionsContext *o, const char *filename)
     ic->flags |= AVFMT_FLAG_NONBLOCK;
     if (o->bitexact)
         ic->flags |= AVFMT_FLAG_BITEXACT;
+
+#if CONFIG_FFMPEG_IVR
+    ic->interrupt_callback.callback = input_interrupt_cb;
+    ic->interrupt_callback.opaque = f;
+#else    
     ic->interrupt_callback = int_cb;
+#endif       
 
     if (!av_dict_get(o->g->format_opts, "scan_all_pmts", NULL, AV_DICT_MATCH_CASE)) {
         av_dict_set(&o->g->format_opts, "scan_all_pmts", "1", AV_DICT_DONT_OVERWRITE);
         scan_all_pmts_set = 1;
     }
     /* open the input file with generic avformat function */
+#if CONFIG_FFMPEG_IVR
+    input_start_io(f);
     err = avformat_open_input(&ic, filename, file_iformat, &o->g->format_opts);
+    input_stop_io(f);
+#else    
+    err = avformat_open_input(&ic, filename, file_iformat, &o->g->format_opts);
+#endif
     if (err < 0) {
         print_error(filename, err);
         if (err == AVERROR_PROTOCOL_NOT_FOUND)
@@ -1102,7 +1127,14 @@ static int open_input_file(OptionsContext *o, const char *filename)
 
         /* If not enough info to get the stream parameters, we decode the
            first frames to get it. (used in mpeg case for example) */
+
+#if CONFIG_FFMPEG_IVR
+        input_start_io(f);
         ret = avformat_find_stream_info(ic, opts);
+        input_stop_io(f);
+#else
+        ret = avformat_find_stream_info(ic, opts);
+#endif
 
         for (i = 0; i < orig_nb_streams; i++)
             av_dict_free(&opts[i]);
@@ -1172,9 +1204,11 @@ static int open_input_file(OptionsContext *o, const char *filename)
     av_dump_format(ic, nb_input_files, filename, 0);
 
     GROW_ARRAY(input_files, nb_input_files);
+#if !CONFIG_FFMPEG_IVR
     f = av_mallocz(sizeof(*f));
     if (!f)
         exit_program(1);
+#endif        
     input_files[nb_input_files - 1] = f;
 
     f->ctx        = ic;
@@ -3327,6 +3361,13 @@ const OptionDef options[] = {
     { "f",              HAS_ARG | OPT_STRING | OPT_OFFSET |
                         OPT_INPUT | OPT_OUTPUT,                      { .off       = OFFSET(format) },
         "force format", "fmt" },
+        
+#if CONFIG_FFMPEG_IVR    
+    { "input_io_timeout",         HAS_ARG | OPT_INT | OPT_EXPERT,              { &input_io_timeout },
+        "the max io time (in milliseconds) for read a packet from input file, default is 0 means disabled", "msec" },   
+    { "output_io_bw",         HAS_ARG | OPT_INT | OPT_EXPERT,              { &output_io_bw },
+        "the max io bandwidth (in Bytes/sec) for writing to the output file, default is 0 means disabled", "Bytes/sec" },  
+#endif           
     { "y",              OPT_BOOL,                                    {              &file_overwrite },
         "overwrite output files" },
     { "n",              OPT_BOOL,                                    {              &no_file_overwrite },
