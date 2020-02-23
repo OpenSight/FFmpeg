@@ -91,6 +91,7 @@ typedef struct CachedSegmentWriter {
 
 typedef enum CachedSegmentFlags {
     CSEG_FLAG_NONBLOCK = (1 << 0),
+    CSEG_FLAG_FORCE_AV = (1 << 1),
 } CachedSegmentFlags;
 
 
@@ -123,6 +124,7 @@ struct CachedSegmentContext {
     int64_t recording_time;  // segment length in 1/AV_TIME_BASE sec
     int has_video;
     int has_subtitle;
+    int has_audio;
     int64_t start_dts;    // start pts for the whole list
 
     int64_t start_pos;    // current segment starting position
