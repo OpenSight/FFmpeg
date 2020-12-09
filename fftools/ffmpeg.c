@@ -836,7 +836,32 @@ static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int u
     ost->packets_written++;
 
     pkt->stream_index = ost->index;
-
+	
+#if CONFIG_FFMPEG_IVR
+    do{
+	    static int64_t max_dts = AV_NOPTS_VALUE;
+        int64_t pkt_dts = av_rescale_q_rnd(pkt->dts, ost->st->time_base, AV_TIME_BASE_Q, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+		
+        if (pkt_dts != AV_NOPTS_VALUE &&
+            max_dts != AV_NOPTS_VALUE &&
+            (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO || st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)) {
+			
+		    // test for inter stream discontinuity
+            int64_t delta2   = pkt_dts - max_dts;
+            if (delta2 < -1LL*dts_delta_threshold*AV_TIME_BASE ||
+                delta2 >  1LL*dts_delta_threshold*AV_TIME_BASE){
+                av_log(NULL, AV_LOG_WARNING,
+                   "FFMPEG_IVR after transcode, Inter stream timestamp non-sync: delta = %"PRId64", cur max_dts= %"PRId64"\n",
+                   delta2, max_dts);
+				}
+        } 
+		
+		if(max_dts == AV_NOPTS_VALUE || pkt_dts > max_dts){
+            max_dts = pkt_dts;
+        }
+           
+    }while(0);
+#endif
     if (debug_ts) {
         av_log(NULL, AV_LOG_INFO, "muxer <- type:%s "
                 "pkt_pts:%s pkt_pts_time:%s pkt_dts:%s pkt_dts_time:%s size:%d\n",
@@ -4597,12 +4622,26 @@ static int process_input(int file_index)
 
 #if CONFIG_FFMPEG_IVR    
     pkt_dts = av_rescale_q_rnd(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+    if (pkt_dts != AV_NOPTS_VALUE &&
+        ifile->last_ts != AV_NOPTS_VALUE &&
+        (ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO || ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)) {
+			
+		// test for inter stream discontinuity
+        int64_t delta2   = pkt_dts - ifile->last_ts;
+        if (delta2 < -1LL*dts_delta_threshold*AV_TIME_BASE ||
+            delta2 >  1LL*dts_delta_threshold*AV_TIME_BASE){
+            av_log(NULL, AV_LOG_WARNING,
+                   "FFMPEG_IVR before transcode, Inter stream timestamp non-sync: delta = %"PRId64", cur offset= %"PRId64"\n",
+                   delta2, ifile->ts_offset);
+        } 
+    }
+
     if (force_dts_monotonicity &&
         pkt_dts != AV_NOPTS_VALUE &&
         ist->dts != AV_NOPTS_VALUE &&
         (ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO || ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)) {
+			
         // adjust the incoming packet by the accumulated monotonicity error
-
         int64_t delta = pkt_dts - ist->dts;
         if(delta < 0 || delta > 1LL*dts_delta_threshold*AV_TIME_BASE){
             if(ist->next_dts != AV_NOPTS_VALUE){
@@ -4619,6 +4658,7 @@ static int process_input(int file_index)
                 pkt.pts -= av_rescale_q(delta, AV_TIME_BASE_Q, ist->st->time_base);            
         }      
     }
+    	
 #endif    
     if (pkt.dts != AV_NOPTS_VALUE)
         ifile->last_ts = av_rescale_q(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q);
