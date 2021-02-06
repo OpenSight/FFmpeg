@@ -675,19 +675,20 @@ static int cseg_write_packet(AVFormatContext *s, AVPacket *pkt)
     }
     
     //terminated if extradata has been changed
-    if(pkt->flags & AV_PKT_FLAG_KEY){
-        int side_size = 0;
-        uint8_t * side = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, &side_size);
-        if(side != NULL){
-            if(side_size != st->codecpar->extradata_size || 
-               memcmp(side, st->codecpar->extradata, side_size) != 0){
-                av_log(s, AV_LOG_ERROR, 
-                        "Not suppot for extradata change when recording mpegts\n");      
-                return AVERROR_EXIT;
-            }
-        }//if(side != NULL)
-    }//if(pkt->flags & AV_PKT_FLAG_KEY)
-
+    if(!(cseg->flags & CSEG_FLAG_NOCHECK_EXTRA)){    
+        if(pkt->flags & AV_PKT_FLAG_KEY){
+            int side_size = 0;
+            uint8_t * side = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, &side_size);
+            if(side != NULL){
+                if(side_size != st->codecpar->extradata_size || 
+                   memcmp(side, st->codecpar->extradata, side_size) != 0){
+                    av_log(s, AV_LOG_ERROR, 
+                            "Not suppot for extradata change when recording mpegts\n");      
+                    return AVERROR_EXIT;
+                }
+            }//if(side != NULL)
+        }//if(pkt->flags & AV_PKT_FLAG_KEY)
+    }//if(! (cseg->flags & CSEG_FLAG_NOCHECK_EXTRAN)){    
 
     // correct dts if enabled
     // dts correct algorithm is used to avoid the dts discontinue between segments 
@@ -968,6 +969,7 @@ static const AVOption options[] = {
     {"cseg_flags",     "set flags affecting cached segement working policy", OFFSET(flags), AV_OPT_TYPE_FLAGS, {.i64 = 0 }, 0, UINT_MAX, E, "flags"},
     {"nonblock",   "never blocking in the write_packet() when the cached list is full, instead, dicard the eariest segment", 0, AV_OPT_TYPE_CONST, {.i64 = CSEG_FLAG_NONBLOCK }, 0, UINT_MAX,   E, "flags"},
     {"force_av",   "an error would occur if the output context has no video/audio stream", 0, AV_OPT_TYPE_CONST, {.i64 = CSEG_FLAG_FORCE_AV }, 0, UINT_MAX,   E, "flags"},
+    {"nocheck_extra",   "not check extradata change when recording", 0, AV_OPT_TYPE_CONST, {.i64 = CSEG_FLAG_NOCHECK_EXTRA }, 0, UINT_MAX,   E, "flags"},
 
     { NULL },
 };
