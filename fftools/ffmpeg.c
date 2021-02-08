@@ -4680,6 +4680,10 @@ static int process_input(int file_index)
         }else if(ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO && ifile->audio_last_dts != AV_NOPTS_VALUE && ifile->audio_last_dts != 0){
             int64_t delta = pkt_dts - ifile->audio_last_dts;
             if(delta < -1LL*dts_unsync_threshold*AV_TIME_BASE || delta > 1LL*dts_unsync_threshold*AV_TIME_BASE){
+                
+                av_log(NULL, AV_LOG_WARNING,
+                        "Audio Video timestamp unsync, video_dts - audio_last_dts;: %"PRId64"\n",
+                               delta); 
                
                 if (delta > 1LL*dts_unsync_threshold*AV_TIME_BASE){
                      /* if video is faster than audio, sync the video frame ts to last audio ts or to the video next dts*/
@@ -4692,7 +4696,7 @@ static int process_input(int file_index)
                 }
                 ifile->av_sync_offset -= delta;
                 av_log(NULL, AV_LOG_WARNING,
-                        "Audio Video timestamp unsync, delta: %"PRId64", new offset = %"PRId64"\n",
+                        "Audio Video timestamp unsync, correct delta: %"PRId64", new offset = %"PRId64"\n",
                                delta, ifile->av_sync_offset); 
                 pkt.dts -= av_rescale_q(delta, AV_TIME_BASE_Q, ist->st->time_base);
                 if (pkt.pts != AV_NOPTS_VALUE)
