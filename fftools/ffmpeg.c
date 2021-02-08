@@ -4680,9 +4680,15 @@ static int process_input(int file_index)
         }else if(ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO && ifile->audio_last_dts != AV_NOPTS_VALUE && ifile->audio_last_dts != 0){
             int64_t delta = pkt_dts - ifile->audio_last_dts;
             if(delta < -1LL*dts_unsync_threshold*AV_TIME_BASE || delta > 1LL*dts_unsync_threshold*AV_TIME_BASE){
-                /* if video is faster than audio, make the last video frame duration as short as possible (1ms) */
+               
                 if (delta > 1LL*dts_unsync_threshold*AV_TIME_BASE){
-                    delta = pkt_dts - (ist->dts + 1000);  
+                     /* if video is faster than audio, sync the video frame ts to last audio ts or to the video next dts*/
+                     
+                    if(ifile->audio_last_dts > (ist->dts + 1000)){
+                        delta = pkt_dts - ifile->audio_last_dts;
+                    }else{
+                        delta = pkt_dts - (ist->dts + 1000);  
+                    }
                 }
                 ifile->av_sync_offset -= delta;
                 av_log(NULL, AV_LOG_WARNING,
