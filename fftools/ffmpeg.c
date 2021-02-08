@@ -4547,6 +4547,9 @@ static int process_input(int file_index)
     if (sync_av && pkt.dts != AV_NOPTS_VALUE && ifile->av_sync_offset != 0 && ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO){
         pkt.dts += av_rescale_q(ifile->av_sync_offset, AV_TIME_BASE_Q, ist->st->time_base);
     }
+    if (sync_av && pkt.pts != AV_NOPTS_VALUE && ifile->av_sync_offset != 0 && ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO){
+        pkt.pts += av_rescale_q(ifile->av_sync_offset, AV_TIME_BASE_Q, ist->st->time_base);
+    }    
 #endif
     
     if (pkt.pts != AV_NOPTS_VALUE)
