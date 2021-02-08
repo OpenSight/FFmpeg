@@ -118,6 +118,8 @@ int64_t output_io_bw = 0;    //default is 0, disable IO bandwhich contrial, unit
 int64_t cur_sec = 0;
 int64_t cur_bytes = 0;
 int force_dts_monotonicity = 0;
+int sync_av = 0;
+float dts_unsync_threshold = 1.0;
 #endif
 
 static int intra_only         = 0;
@@ -3370,6 +3372,10 @@ const OptionDef options[] = {
         "the max io bandwidth (in Bytes/sec) for writing to the output file, default is 0 means disabled", "Bytes/sec" },  
     { "force_dts_monotonicity", OPT_BOOL | OPT_EXPERT,               { &force_dts_monotonicity },
         "correct dts monotonicity errors" },
+    { "sync_av", OPT_BOOL | OPT_EXPERT,                { &sync_av },
+        "force sync video stream timestamp to audio stream" },
+    { "dts_unsync_threshold", HAS_ARG | OPT_FLOAT | OPT_EXPERT,       { &dts_unsync_threshold },
+        "AV timestamp unsync delta threshold, default is 1.0 sec" },
 #endif           
     { "y",              OPT_BOOL,                                    {              &file_overwrite },
         "overwrite output files" },

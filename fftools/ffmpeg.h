@@ -422,6 +422,8 @@ typedef struct InputFile {
 
 #if CONFIG_FFMPEG_IVR
     struct timespec io_start_ts;    
+    int64_t av_sync_offset;
+    int64_t audio_last_dts;
 #endif
 
 } InputFile;
@@ -632,6 +634,8 @@ extern int64_t output_io_bw;
 extern int64_t cur_sec;
 extern int64_t cur_bytes;
 extern int force_dts_monotonicity;
+extern int sync_av;
+extern float dts_unsync_threshold;
 int input_interrupt_cb(void *arg);
 void input_start_io(InputFile *f);
 void input_stop_io(InputFile *f);
