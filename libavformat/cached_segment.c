@@ -31,6 +31,7 @@
 #include "libavutil/mathematics.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/avstring.h"
+#include "libavutil/intreadwrite.h"
 #include "libavutil/opt.h"
 #include "libavutil/log.h"
 #include "libavutil/fifo.h"
@@ -689,6 +690,17 @@ static int cseg_write_packet(AVFormatContext *s, AVPacket *pkt)
             }//if(side != NULL)
         }//if(pkt->flags & AV_PKT_FLAG_KEY)
     }//if(! (cseg->flags & CSEG_FLAG_NOCHECK_EXTRAN)){    
+        
+    /* ignore invalid h264 packet from janus */
+    if (st->codecpar->codec_id == AV_CODEC_ID_H264) {
+        if (pkt->size < 5 || AV_RB32(pkt->data) != 0x0000001 && AV_RB24(pkt->data) != 0x000001) {
+            av_log(s, AV_LOG_WARNING, "H.264 bitstream error, startcode missing, size %d", pkt->size);
+            if (pkt->size)
+                av_log(s, AV_LOG_WARNING, " data %08"PRIX32, AV_RB32(pkt->data));
+            av_log(s, AV_LOG_WARNING, ", dropped\n");
+            return 0; 
+        }
+    }
 
     // correct dts if enabled
     // dts correct algorithm is used to avoid the dts discontinue between segments 
