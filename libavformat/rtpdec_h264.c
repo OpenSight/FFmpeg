@@ -318,12 +318,21 @@ static int h264_handle_packet(AVFormatContext *ctx, PayloadContext *data,
     uint8_t type;
     int result = 0;
 
+
+
     if (!len) {
         av_log(ctx, AV_LOG_ERROR, "Empty H.264 RTP packet\n");
         return AVERROR_INVALIDDATA;
     }
     nal  = buf[0];
     type = nal & 0x1f;
+
+#if CONFIG_FFMPEG_IVR
+
+    av_log(ctx, AV_LOG_WARNING, "[rtpdev_h264] type: %d, nal: 0x%02hhx, len: %d, seg: %d, ts: %u\n",
+           (int)type, nal,(int)len, (int)seq, (*timestamp));
+
+#endif	
 
     /* Simplify the case (these are all the NAL types used internally by
      * the H.264 codec). */

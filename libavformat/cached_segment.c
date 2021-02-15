@@ -694,11 +694,9 @@ static int cseg_write_packet(AVFormatContext *s, AVPacket *pkt)
     /* ignore invalid h264 packet from janus */
     if (st->codecpar->codec_id == AV_CODEC_ID_H264) {
         if (pkt->size < 5 || AV_RB32(pkt->data) != 0x0000001 && AV_RB24(pkt->data) != 0x000001) {
-            av_log(s, AV_LOG_WARNING, "H.264 bitstream error, startcode missing, size %d", pkt->size);
-            if (pkt->size)
-                av_log(s, AV_LOG_WARNING, " data %08"PRIX32, AV_RB32(pkt->data));
-            av_log(s, AV_LOG_WARNING, ", dropped\n");
-            return 0; 
+            av_log(s, AV_LOG_WARNING, "H.264 bitstream error, startcode missing, size %d, data %08"PRIX32", dropped\n", 
+                   pkt->size, pkt->size>0?(AV_RB32(pkt->data)):(int32_t)0);
+             return 0; 
         }
     }
 
