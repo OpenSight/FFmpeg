@@ -481,7 +481,11 @@ static int read_key(void)
 int input_interrupt_cb(void *arg)
 {
     InputFile *f = (InputFile *)arg;
-    if(received_nb_signals > transcode_init_done){
+//    if(received_nb_signals > transcode_init_done){
+//        return 1;
+//    }
+    if(received_sigterm){
+        av_log(NULL, AV_LOG_INFO, "signal %d interrupt Input IO\n", received_sigterm);
         return 1;
     }
     
