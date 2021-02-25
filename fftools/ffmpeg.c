@@ -842,8 +842,9 @@ static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int u
     pkt->stream_index = ost->index;
 	
 #if CONFIG_FFMPEG_IVR
-/*
-    do{
+
+
+    if(debug_av_sync){
 	    static int64_t max_dts = AV_NOPTS_VALUE;
         int64_t pkt_dts = av_rescale_q_rnd(pkt->dts, ost->st->time_base, AV_TIME_BASE_Q, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
 		
@@ -853,20 +854,19 @@ static void write_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int u
 			
 		    // test for inter stream discontinuity
             int64_t delta2   = pkt_dts - max_dts;
-            if (delta2 < -1LL*dts_delta_threshold*AV_TIME_BASE ||
-                delta2 >  1LL*dts_delta_threshold*AV_TIME_BASE){
+            if (delta2 < -1LL*dts_unsync_threshold*AV_TIME_BASE ||
+                delta2 >  1LL*dts_unsync_threshold*AV_TIME_BASE){
                 av_log(NULL, AV_LOG_WARNING,
-                   "FFMPEG_IVR after transcode, Inter stream timestamp non-sync: delta = %"PRId64", cur max_dts= %"PRId64"\n",
+                   "muxer <- Video Audio timestamp non-sync: delta = %"PRId64", cur max_dts= %"PRId64"\n",
                    delta2, max_dts);
             }
         } 
 		
 		if(max_dts == AV_NOPTS_VALUE || pkt_dts > max_dts){
             max_dts = pkt_dts;
-        }
-           
-    }while(0);
-*/
+        }           
+    }
+
 #endif
     if (debug_ts) {
         av_log(NULL, AV_LOG_INFO, "muxer <- type:%s "
@@ -4636,21 +4636,8 @@ static int process_input(int file_index)
 
 #if CONFIG_FFMPEG_IVR    
     pkt_dts = av_rescale_q_rnd(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
-/*
-    if (pkt_dts != AV_NOPTS_VALUE &&
-        ifile->last_ts != AV_NOPTS_VALUE &&
-        (ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO || ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)) {
-			
-		// test for inter stream discontinuity
-        int64_t delta2   = pkt_dts - ifile->last_ts;
-        if (delta2 < -1LL*dts_delta_threshold*AV_TIME_BASE ||
-            delta2 >  1LL*dts_delta_threshold*AV_TIME_BASE){
-            av_log(NULL, AV_LOG_WARNING,
-                   "FFMPEG_IVR before transcode, Inter stream timestamp non-sync: delta = %"PRId64", cur offset= %"PRId64"\n",
-                   delta2, ifile->ts_offset);
-        } 
-    }
-*/
+    
+
     if (force_dts_monotonicity &&
         pkt_dts != AV_NOPTS_VALUE &&
         ist->dts != AV_NOPTS_VALUE &&
@@ -4674,8 +4661,10 @@ static int process_input(int file_index)
         }      
     }
     
+    
+    
     pkt_dts = av_rescale_q_rnd(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
-    if (sync_av &&
+    if (sync_av || debug_av_sync &&
         pkt_dts != AV_NOPTS_VALUE &&
         ist->dts != AV_NOPTS_VALUE &&
         (ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO || ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)) {
@@ -4686,8 +4675,8 @@ static int process_input(int file_index)
             if(delta < -1LL*dts_unsync_threshold*AV_TIME_BASE || delta > 1LL*dts_unsync_threshold*AV_TIME_BASE){
                 
                 av_log(NULL, AV_LOG_WARNING,
-                        "Audio Video timestamp unsync, video_dts - audio_last_dts;: %"PRId64"\n",
-                               delta); 
+                        "demuxer+ffmpeg -> Audio Video timestamp unsync, video_dts: %"PRId64",  audio_last_dts;: %"PRId64", delta: %"PRId64"\n",
+                        pkt_dts, ifile->audio_last_dts, delta); 
                
                 if (delta > 1LL*dts_unsync_threshold*AV_TIME_BASE){
                      /* if video is faster than audio, sync the video frame ts to last audio ts or to the video next dts*/
@@ -4698,16 +4687,28 @@ static int process_input(int file_index)
                         delta = pkt_dts - (ist->dts + 1000);  
                     }
                 }
-                ifile->av_sync_offset -= delta;
-                av_log(NULL, AV_LOG_WARNING,
-                        "Audio Video timestamp unsync, correct delta: %"PRId64", new offset = %"PRId64"\n",
-                               delta, ifile->av_sync_offset); 
-                pkt.dts -= av_rescale_q(delta, AV_TIME_BASE_Q, ist->st->time_base);
-                if (pkt.pts != AV_NOPTS_VALUE)
-                    pkt.pts -= av_rescale_q(delta, AV_TIME_BASE_Q, ist->st->time_base);    
+                if(sync_av){
+                    ifile->av_sync_offset -= delta;
+                    av_log(NULL, AV_LOG_WARNING,
+                            "resync Audio Video timestamp, correct delta: %"PRId64", new offset = %"PRId64"\n",
+                                   delta, ifile->av_sync_offset); 
+                    pkt.dts -= av_rescale_q(delta, AV_TIME_BASE_Q, ist->st->time_base);
+                    if (pkt.pts != AV_NOPTS_VALUE)
+                        pkt.pts -= av_rescale_q(delta, AV_TIME_BASE_Q, ist->st->time_base);    
+                
+                }//if(sync_av){
             }          
         }//if(ist->dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO){
     }
+    
+    pkt_dts = av_rescale_q_rnd(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q, AV_ROUND_NEAR_INF|AV_ROUND_PASS_MINMAX);
+    if(debug_dts_monotonicity && pkt_dts != AV_NOPTS_VALUE && ist->dts != AV_NOPTS_VALUE && pkt_dts < ist->dts){
+        av_log(NULL, AV_LOG_WARNING,
+               "demuxer+ffmpeg -> pkt_dts is not monotonicity in the stream, pkt_dts =%"PRId64", ist->dts= %"PRId64"\n",
+                       pkt_dts, ist->dts);      
+    }
+    
+
 #endif    
     if (pkt.dts != AV_NOPTS_VALUE)
         ifile->last_ts = av_rescale_q(pkt.dts, ist->st->time_base, AV_TIME_BASE_Q);

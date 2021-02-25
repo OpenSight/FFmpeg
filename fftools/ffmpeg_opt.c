@@ -119,7 +119,9 @@ int64_t cur_sec = 0;
 int64_t cur_bytes = 0;
 int force_dts_monotonicity = 0;
 int sync_av = 0;
+int debug_av_sync = 0;
 float dts_unsync_threshold = 1.0;
+int debug_dts_monotonicity = 0;
 #endif
 
 static int intra_only         = 0;
@@ -3374,6 +3376,11 @@ const OptionDef options[] = {
         "correct dts monotonicity errors" },
     { "sync_av", OPT_BOOL | OPT_EXPERT,                { &sync_av },
         "force sync video stream timestamp to audio stream" },
+    { "debug_av_sync", OPT_BOOL | OPT_EXPERT,                { &debug_av_sync },
+        "print debug info when timestamp unsync between video and audio stream, but not fix" },
+     { "debug_dts_monotonicity", OPT_BOOL | OPT_EXPERT,                { &debug_dts_monotonicity },
+        "print debug info when dts is unmonotonicity in the stream"},   
+
     { "dts_unsync_threshold", HAS_ARG | OPT_FLOAT | OPT_EXPERT,       { &dts_unsync_threshold },
         "AV timestamp unsync delta threshold, default is 1.0 sec" },
 #endif           
