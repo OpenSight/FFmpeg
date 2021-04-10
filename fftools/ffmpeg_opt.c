@@ -122,6 +122,7 @@ int sync_av = 0;
 int debug_av_sync = 0;
 float dts_unsync_threshold = 1.0;
 int debug_dts_monotonicity = 0;
+int h264_annexb_check = 0;
 #endif
 
 static int intra_only         = 0;
@@ -3383,6 +3384,8 @@ const OptionDef options[] = {
 
     { "dts_unsync_threshold", HAS_ARG | OPT_FLOAT | OPT_EXPERT,       { &dts_unsync_threshold },
         "AV timestamp unsync delta threshold, default is 1.0 sec" },
+    { "h264_annexb_check", HAS_ARG | OPT_INT | OPT_EXPERT,       { &h264_annexb_check },
+        "enable h264 annexb check, 1 means dump the packet data and exit, 2 means only discard the corrupt packet" },
 #endif           
     { "y",              OPT_BOOL,                                    {              &file_overwrite },
         "overwrite output files" },

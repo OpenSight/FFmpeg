@@ -4365,6 +4365,86 @@ static int seek_to_start(InputFile *ifile, AVFormatContext *is)
     return ret;
 }
 
+
+#if CONFIG_FFMPEG_IVR  
+static const uint8_t *ivr_avc_find_startcode_internal(const uint8_t *p, const uint8_t *end)
+{
+    const uint8_t *a = p + 4 - ((intptr_t)p & 3);
+
+    for (end -= 3; p < a && p < end; p++) {
+        if (p[0] == 0 && p[1] == 0 && p[2] == 1)
+            return p;
+    }
+
+    for (end -= 3; p < end; p += 4) {
+        uint32_t x = *(const uint32_t*)p;
+//      if ((x - 0x01000100) & (~x) & 0x80008000) // little endian
+//      if ((x - 0x00010001) & (~x) & 0x00800080) // big endian
+        if ((x - 0x01010101) & (~x) & 0x80808080) { // generic
+            if (p[1] == 0) {
+                if (p[0] == 0 && p[2] == 1)
+                    return p;
+                if (p[2] == 0 && p[3] == 1)
+                    return p+1;
+            }
+            if (p[3] == 0) {
+                if (p[2] == 0 && p[4] == 1)
+                    return p+2;
+                if (p[4] == 0 && p[5] == 1)
+                    return p+3;
+            }
+        }
+    }
+
+    for (end += 3; p < end; p++) {
+        if (p[0] == 0 && p[1] == 0 && p[2] == 1)
+            return p;
+    }
+
+    return end + 3;
+}
+
+static const uint8_t *ivr_avc_find_startcode(const uint8_t *p, const uint8_t *end){
+    const uint8_t *out= ivr_avc_find_startcode_internal(p, end);
+    if(p<out && out<end && !out[-1]) out--;
+    return out;
+}
+
+static int ivr_check_h264_annexb(const uint8_t *buf_in, int size)
+{
+    // check first is start_code
+    const uint8_t *p = buf_in;
+    const uint8_t *end = p + size;
+    const uint8_t *nal_start, *nal_end;
+
+    size = 0;
+    nal_start = ivr_avc_find_startcode(p, end);
+    
+    if(nal_start != buf_in){
+        av_log(NULL, AV_LOG_WARNING,
+               "check_h264_annexb -> buf dose not started with the h264 startcode");
+        return -1;        
+    }
+    
+    while(nal_start < end) {
+        while (nal_start < end && !*(nal_start++)); //nal_start move to nal head
+        
+        nal_end = ivr_avc_find_startcode(nal_start, end); //find next startcode
+        
+        if (nal_end - nal_start == 0){ //check nal size
+            av_log(NULL, AV_LOG_WARNING,
+                   "check_h264_annexb -> nal size is 0");
+            return -1;             
+        }
+        nal_start = nal_end;
+        
+    }
+    
+    return 0;    
+}
+
+#endif
+
 /*
  * Return
  * - 0 -- one packet was read and processed
@@ -4468,6 +4548,27 @@ static int process_input(int file_index)
 
     if (ist->discard)
         goto discard_packet;
+
+#if CONFIG_FFMPEG_IVR           
+    if (h264_annexb_check != 0 &&
+        ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO &&
+        ist->dec_ctx->codec_id == AV_CODEC_ID_H264){
+        if(ivr_check_h264_annexb(pkt.data, pkt.size)){
+            av_log(NULL, AV_LOG_WARNING,
+               "%s: corrupt input packet in stream %d(h264 annexb check fail):\n", is->url, pkt.stream_index);
+            if(h264_annexb_check == 1){
+                av_pkt_dump_log2(NULL, AV_LOG_INFO, &pkt, 1,
+                                 is->streams[pkt.stream_index]);  
+                exit_program(1);                 
+            }else if(h264_annexb_check == 2){
+                av_pkt_dump_log2(NULL, AV_LOG_INFO, &pkt, 0,
+                                 is->streams[pkt.stream_index]);   
+                goto discard_packet;
+            }
+        }
+    }
+#endif
+    
 
     if (pkt.flags & AV_PKT_FLAG_CORRUPT) {
         av_log(NULL, exit_on_error ? AV_LOG_FATAL : AV_LOG_WARNING,

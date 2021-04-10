@@ -638,6 +638,7 @@ extern int sync_av;
 extern int debug_av_sync;
 extern int debug_dts_monotonicity;
 extern float dts_unsync_threshold;
+extern int h264_annexb_check;
 int input_interrupt_cb(void *arg);
 void input_start_io(InputFile *f);
 void input_stop_io(InputFile *f);
