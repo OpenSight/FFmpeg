@@ -4554,12 +4554,18 @@ static int process_input(int file_index)
         ist->dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO &&
         ist->dec_ctx->codec_id == AV_CODEC_ID_H264){
         if(ivr_check_h264_annexb(pkt.data, pkt.size)){
+            char * strategy = "unknown";
+            if(h264_annexb_check == 1){
+                strategy = "dump packet";
+            }else if(h264_annexb_check == 2){
+                strategy = "discard packet";
+            }
             av_log(NULL, AV_LOG_WARNING,
-               "%s: corrupt input packet in stream %d(h264 annexb check fail):\n", is->url, pkt.stream_index);
+               "%s: h264 annexb check fail in stream %d, %s\n", is->url, pkt.stream_index, strategy);
             if(h264_annexb_check == 1){
                 av_pkt_dump_log2(NULL, AV_LOG_INFO, &pkt, 1,
                                  is->streams[pkt.stream_index]);  
-                exit_program(1);                 
+                //exit_program(1);                 
             }else if(h264_annexb_check == 2){
                 av_pkt_dump_log2(NULL, AV_LOG_INFO, &pkt, 0,
                                  is->streams[pkt.stream_index]);   
