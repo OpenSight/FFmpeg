@@ -4422,7 +4422,7 @@ static int ivr_check_h264_annexb(const uint8_t *buf_in, int size)
     
     if(nal_start != buf_in){
         av_log(NULL, AV_LOG_WARNING,
-               "check_h264_annexb -> buf dose not started with the h264 startcode");
+               "check_h264_annexb -> buf dose not started with the h264 startcode\n");
         return -1;        
     }
     
@@ -4433,7 +4433,7 @@ static int ivr_check_h264_annexb(const uint8_t *buf_in, int size)
         
         if (nal_end - nal_start == 0){ //check nal size
             av_log(NULL, AV_LOG_WARNING,
-                   "check_h264_annexb -> nal size is 0");
+                   "check_h264_annexb -> nal size is 0\n");
             return -1;             
         }
         nal_start = nal_end;
