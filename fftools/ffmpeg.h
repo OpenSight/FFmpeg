@@ -630,6 +630,7 @@ extern HWDevice *filter_hw_device;
 
 #if CONFIG_FFMPEG_IVR
 extern int input_io_timeout;
+extern int exit_on_timeout;
 extern int64_t output_io_bw;
 extern int64_t cur_sec;
 extern int64_t cur_bytes;
