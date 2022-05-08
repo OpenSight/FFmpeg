@@ -496,7 +496,7 @@ int input_interrupt_cb(void *arg)
               (cur_ts.tv_nsec - f->io_start_ts.tv_nsec) / 1000000;       
         if(io_dur >= (uint64_t)input_io_timeout){
             av_log(NULL, AV_LOG_ERROR, "Input IO Timeout( >=%d ms)\n", input_io_timeout);
-            if(input_io_timeout){
+            if(exit_on_timeout){
                 av_log(NULL, AV_LOG_ERROR, "Exit on Input IO Timeout\n", input_io_timeout);
                 exit_program(1);
             }
