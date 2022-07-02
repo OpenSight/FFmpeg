@@ -684,15 +684,14 @@ static int cseg_write_packet(AVFormatContext *s, AVPacket *pkt)
             if(side_size != st->codecpar->extradata_size || 
                memcmp(side, st->codecpar->extradata, side_size) != 0){
                 if(cseg->flags & CSEG_FLAG_NOCHECK_EXTRA){
-
                     // change the stream's extra data
-
                     AVStream * ost = oc->streams[pkt->stream_index];
-                    av_freep(&st->codecpar->extradata);
-                    av_freep(&ost->codecpar->extradata);
-
-                    st->codecpar->extradata = av_mallocz(side_size + AV_INPUT_BUFFER_PADDING_SIZE);
-                    ost->codecpar->extradata = av_mallocz(side_size + AV_INPUT_BUFFER_PADDING_SIZE);
+                    if(side_size > st->codecpar->extradata_size){
+                        av_freep(&st->codecpar->extradata);
+                        av_freep(&ost->codecpar->extradata);
+                        st->codecpar->extradata = av_mallocz(side_size + AV_INPUT_BUFFER_PADDING_SIZE);
+                        ost->codecpar->extradata = av_mallocz(side_size + AV_INPUT_BUFFER_PADDING_SIZE);
+                    }
                     st->codecpar->extradata_size = side_size;
                     ost->codecpar->extradata_size = side_size;
                     memcpy(st->codecpar->extradata, side, side_size);
@@ -700,10 +699,10 @@ static int cseg_write_packet(AVFormatContext *s, AVPacket *pkt)
 
 
                 }else{
-                        //terminated if extradata has been changed
-                        av_log(s, AV_LOG_ERROR, 
-                                "Not suppot for extradata change when recording mpegts\n");      
-                        return AVERROR_EXIT;                        
+                    //terminated if extradata has been changed
+                    av_log(s, AV_LOG_ERROR, 
+                            "Not suppot for extradata change when recording mpegts\n");      
+                    return AVERROR_EXIT;                        
                 }
             }
         }//if(side != NULL)
