@@ -675,22 +675,40 @@ static int cseg_write_packet(AVFormatContext *s, AVPacket *pkt)
         return AVERROR_EXIT;
     }
     
-    //terminated if extradata has been changed
-    if(!(cseg->flags & CSEG_FLAG_NOCHECK_EXTRA)){    
-        if(pkt->flags & AV_PKT_FLAG_KEY){
-            int side_size = 0;
-            uint8_t * side = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, &side_size);
-            if(side != NULL){
-                if(side_size != st->codecpar->extradata_size || 
-                   memcmp(side, st->codecpar->extradata, side_size) != 0){
-                    av_log(s, AV_LOG_ERROR, 
-                            "Not suppot for extradata change when recording mpegts\n");      
-                    return AVERROR_EXIT;
+    
+    //check the extradata
+    if((pkt->flags & AV_PKT_FLAG_KEY) && (st->codecpar->codec_id == AV_CODEC_ID_H264)){
+        int side_size = 0;
+        uint8_t * side = av_packet_get_side_data(pkt, AV_PKT_DATA_NEW_EXTRADATA, &side_size);
+        if(side != NULL){
+            if(side_size != st->codecpar->extradata_size || 
+               memcmp(side, st->codecpar->extradata, side_size) != 0){
+                if(cseg->flags & CSEG_FLAG_NOCHECK_EXTRA){
+
+                    // change the stream's extra data
+
+                    AVStream * ost = oc->streams[pkt->stream_index];
+                    av_freep(&st->codecpar->extradata);
+                    av_freep(&ost->codecpar->extradata);
+
+                    st->codecpar->extradata = av_mallocz(side_size + AV_INPUT_BUFFER_PADDING_SIZE);
+                    ost->codecpar->extradata = av_mallocz(side_size + AV_INPUT_BUFFER_PADDING_SIZE);
+                    st->codecpar->extradata_size = side_size;
+                    ost->codecpar->extradata_size = side_size;
+                    memcpy(st->codecpar->extradata, side, side_size);
+                    memcpy(ost->codecpar->extradata, side, side_size);
+
+
+                }else{
+                        //terminated if extradata has been changed
+                        av_log(s, AV_LOG_ERROR, 
+                                "Not suppot for extradata change when recording mpegts\n");      
+                        return AVERROR_EXIT;                        
                 }
-            }//if(side != NULL)
-        }//if(pkt->flags & AV_PKT_FLAG_KEY)
-    }//if(! (cseg->flags & CSEG_FLAG_NOCHECK_EXTRAN)){    
-        
+            }
+        }//if(side != NULL)
+    }//if((pkt->flags & AV_PKT_FLAG_KEY) && (st->codecpar->codec_id == AV_CODEC_ID_H264)){
+
     /* ignore invalid h264 packet from janus */
     if (st->codecpar->codec_id == AV_CODEC_ID_H264) {
         if (pkt->size < 5 || AV_RB32(pkt->data) != 0x0000001 && AV_RB24(pkt->data) != 0x000001) {
