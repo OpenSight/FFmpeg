@@ -319,6 +319,7 @@ static void ts_discontinuity_detect(Demuxer *d, InputStream *ist,
 static void ts_discontinuity_process(Demuxer *d, InputStream *ist,
                                      AVPacket *pkt)
 {
+    InputFile *ifile = &d->f;
     int64_t offset = av_rescale_q(d->ts_offset_discont, AV_TIME_BASE_Q,
                                   pkt->time_base);
 
@@ -329,11 +330,70 @@ static void ts_discontinuity_process(Demuxer *d, InputStream *ist,
     if (pkt->pts != AV_NOPTS_VALUE)
         pkt->pts += offset;
 
+#if CONFIG_FFMPEG_IVR
+    // Apply A/V sync offset for video streams
+    if (sync_av && pkt->dts != AV_NOPTS_VALUE && ifile->av_sync_offset != 0 && 
+        ist->par->codec_type == AVMEDIA_TYPE_VIDEO) {
+        pkt->dts += av_rescale_q(ifile->av_sync_offset, AV_TIME_BASE_Q, pkt->time_base);
+    }
+    if (sync_av && pkt->pts != AV_NOPTS_VALUE && ifile->av_sync_offset != 0 && 
+        ist->par->codec_type == AVMEDIA_TYPE_VIDEO) {
+        pkt->pts += av_rescale_q(ifile->av_sync_offset, AV_TIME_BASE_Q, pkt->time_base);
+    }
+#endif
+
     // detect timestamp discontinuities for audio/video
     if ((ist->par->codec_type == AVMEDIA_TYPE_VIDEO ||
          ist->par->codec_type == AVMEDIA_TYPE_AUDIO) &&
         pkt->dts != AV_NOPTS_VALUE)
         ts_discontinuity_detect(d, ist, pkt);
+
+#if CONFIG_FFMPEG_IVR
+    // A/V synchronization detection and correction
+    DemuxStream *ds = ds_from_ist(ist);
+    int64_t pkt_dts = av_rescale_q_rnd(pkt->dts, pkt->time_base, AV_TIME_BASE_Q,
+                                       AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+    
+    if ((sync_av || debug_av_sync) &&
+        pkt_dts != AV_NOPTS_VALUE &&
+        ds->dts != AV_NOPTS_VALUE &&
+        (ist->par->codec_type == AVMEDIA_TYPE_VIDEO || ist->par->codec_type == AVMEDIA_TYPE_AUDIO)) {
+        
+        if (ist->par->codec_type == AVMEDIA_TYPE_AUDIO) {
+            ifile->audio_last_dts = pkt_dts;
+        } else if (ist->par->codec_type == AVMEDIA_TYPE_VIDEO && 
+                   ifile->audio_last_dts != AV_NOPTS_VALUE && 
+                   ifile->audio_last_dts != 0) {
+            int64_t delta = pkt_dts - ifile->audio_last_dts;
+            if (delta < -1LL * dts_unsync_threshold * AV_TIME_BASE || 
+                delta > 1LL * dts_unsync_threshold * AV_TIME_BASE) {
+                
+                av_log(ist, AV_LOG_WARNING,
+                       "Audio Video timestamp unsync, video_dts: %"PRId64", audio_last_dts: %"PRId64", delta: %"PRId64"\n",
+                       pkt_dts, ifile->audio_last_dts, delta);
+                
+                if (delta > 1LL * dts_unsync_threshold * AV_TIME_BASE) {
+                    /* if video is faster than audio, sync the video frame ts to last audio ts or to the video next dts */
+                    if (ifile->audio_last_dts > (ds->dts + 1000)) {
+                        delta = pkt_dts - ifile->audio_last_dts;
+                    } else {
+                        delta = pkt_dts - (ds->dts + 1000);
+                    }
+                }
+                
+                if (sync_av) {
+                    ifile->av_sync_offset -= delta;
+                    av_log(ist, AV_LOG_WARNING,
+                           "Resync Audio Video timestamp, correct delta: %"PRId64", new offset = %"PRId64"\n",
+                           delta, ifile->av_sync_offset);
+                    pkt->dts -= av_rescale_q(delta, AV_TIME_BASE_Q, pkt->time_base);
+                    if (pkt->pts != AV_NOPTS_VALUE)
+                        pkt->pts -= av_rescale_q(delta, AV_TIME_BASE_Q, pkt->time_base);
+                }
+            }
+        }
+    }
+#endif
 }
 
 static int ist_dts_update(DemuxStream *ds, AVPacket *pkt, FrameData *fd)
