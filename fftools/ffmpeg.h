@@ -510,6 +510,12 @@ typedef struct InputFile {
      * if new streams appear dynamically during demuxing */
     InputStream    **streams;
     int           nb_streams;
+
+#if CONFIG_FFMPEG_IVR
+    struct timespec io_start_ts;    
+    int64_t av_sync_offset;
+    int64_t audio_last_dts;
+#endif
 } InputFile;
 
 enum forced_keyframes_const {
@@ -757,6 +763,23 @@ extern int copy_unknown_streams;
 extern int recast_media;
 
 extern FILE *vstats_file;
+
+#if CONFIG_FFMPEG_IVR
+extern int input_io_timeout;
+extern int exit_on_timeout;
+extern int64_t output_io_bw;
+extern int64_t cur_sec;
+extern int64_t cur_bytes;
+extern int force_dts_monotonicity;
+extern int sync_av;
+extern int debug_av_sync;
+extern int debug_dts_monotonicity;
+extern float dts_unsync_threshold;
+extern int h264_annexb_check;
+int input_interrupt_cb(void *arg);
+void input_start_io(InputFile *f);
+void input_stop_io(InputFile *f);
+#endif
 
 void term_init(void);
 void term_exit(void);

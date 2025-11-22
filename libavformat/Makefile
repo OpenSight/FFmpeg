@@ -176,6 +176,11 @@ OBJS-$(CONFIG_CODEC2RAW_DEMUXER)         += codec2.o pcm.o
 OBJS-$(CONFIG_CODEC2RAW_MUXER)           += rawenc.o
 OBJS-$(CONFIG_CONCAT_DEMUXER)            += concatdec.o
 OBJS-$(CONFIG_CRC_MUXER)                 += crcenc.o
+OBJS-$(CONFIG_CSEG_MUXER)                += cached_segment.o \
+                                            cseg_writers/cseg_file_writer.o \
+                                            cseg_writers/cseg_dummy_writer.o \
+                                            cseg_writers/cseg_ivr_writer.o \
+                                            cseg_writers/cJSON.o
 OBJS-$(CONFIG_DATA_DEMUXER)              += rawdec.o
 OBJS-$(CONFIG_DATA_MUXER)                += rawenc.o
 OBJS-$(CONFIG_DASH_MUXER)                += dash.o dashenc.o hlsplaylist.o

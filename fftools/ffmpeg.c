@@ -83,6 +83,10 @@
 #include "ffmpeg_utils.h"
 #include "graph/graphprint.h"
 
+#if CONFIG_FFMPEG_IVR
+#include "ivr_rotate_logger.h"
+#endif
+
 const char program_name[] = "ffmpeg";
 const int program_birth_year = 2000;
 
@@ -361,6 +365,9 @@ static void ffmpeg_cleanup(int ret)
         av_log(NULL, AV_LOG_INFO, "Conversion failed!\n");
     }
     term_exit();
+#if CONFIG_FFMPEG_IVR
+    rotate_logger_uninit();
+#endif
     ffmpeg_exited = 1;
 }
 
@@ -959,6 +966,45 @@ static int64_t getmaxrss(void)
     return 0;
 #endif
 }
+
+#if CONFIG_FFMPEG_IVR
+int input_interrupt_cb(void *arg)
+{
+    InputFile *f = (InputFile *)arg;
+    
+    if(received_sigterm){
+        av_log(NULL, AV_LOG_INFO, "signal %d interrupt Input IO\n", received_sigterm);
+        return 1;
+    }
+    
+    if(input_io_timeout > 0 && f != NULL && f->io_start_ts.tv_sec != 0){
+        struct timespec cur_ts;
+        clock_gettime(CLOCK_MONOTONIC, &cur_ts);
+        uint64_t io_dur = (cur_ts.tv_sec - f->io_start_ts.tv_sec) * 1000 +
+                          (cur_ts.tv_nsec - f->io_start_ts.tv_nsec) / 1000000;
+        if(io_dur >= (uint64_t)input_io_timeout){
+            av_log(NULL, AV_LOG_ERROR, "Input IO Timeout( >=%d ms)\n", input_io_timeout);
+            if(exit_on_timeout){
+                av_log(NULL, AV_LOG_ERROR, "Exit on Input IO Timeout\n");
+                exit(1);
+            }
+            return 1;
+        }
+    }    
+    return 0;
+}
+
+void input_start_io(InputFile *f)
+{
+    clock_gettime(CLOCK_MONOTONIC, &(f->io_start_ts));
+}
+
+void input_stop_io(InputFile *f)
+{
+    f->io_start_ts.tv_sec = 0;
+    f->io_start_ts.tv_nsec = 0;
+}
+#endif
 
 int main(int argc, char **argv)
 {

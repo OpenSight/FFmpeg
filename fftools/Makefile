@@ -11,6 +11,8 @@ ALLAVPROGS_G = $(AVBASENAMES:%=%$(PROGSSUF)_g$(EXESUF))
 
 include $(SRC_PATH)/fftools/resources/Makefile
 
+OBJS-fftools-$(CONFIG_FFMPEG_IVR) += fftools/ivr_rotate_logger.o
+
 OBJS-ffmpeg +=                  \
     fftools/ffmpeg_dec.o        \
     fftools/ffmpeg_demux.o      \
@@ -37,6 +39,8 @@ OBJS-ffmpeg +=                  \
     fftools/textformat/tw_stdout.o    \
     $(OBJS-resman)                    \
 
+OBJS-ffmpeg += $(OBJS-ffmpeg-yes)
+
 OBJS-ffprobe +=                       \
     fftools/textformat/avtextformat.o \
     fftools/textformat/tf_compact.o   \
@@ -50,10 +54,12 @@ OBJS-ffprobe +=                       \
     fftools/textformat/tw_buffer.o    \
     fftools/textformat/tw_stdout.o    \
 
+OBJS-ffprobe += $(OBJS-ffprobe-yes)
+
 OBJS-ffplay += fftools/ffplay_renderer.o
 
 define DOFFTOOL
-OBJS-$(1) += fftools/cmdutils.o fftools/opt_common.o fftools/$(1).o $(OBJS-$(1)-yes)
+OBJS-$(1) += fftools/cmdutils.o fftools/opt_common.o fftools/$(1).o $(OBJS-$(1)-yes) $(OBJS-fftools-yes)
 ifdef HAVE_GNU_WINDRES
 OBJS-$(1) += fftools/fftoolsres.o
 endif

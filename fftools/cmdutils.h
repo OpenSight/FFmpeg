@@ -406,6 +406,13 @@ void uninit_parse_context(OptionParseContext *octx);
  */
 void parse_loglevel(int argc, char **argv, const OptionDef *options);
 
+#if CONFIG_FFMPEG_IVR
+/**
+ * Find the '-log_rotate' option in the command line args and apply it.
+ */
+int parse_log_rotate(int argc, char **argv, const OptionDef *options);
+#endif
+
 /**
  * Return index of option opt in argv or 0 if not found.
  */

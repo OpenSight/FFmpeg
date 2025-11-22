@@ -25,6 +25,10 @@
 #include "cmdutils.h"
 #include "opt_common.h"
 
+#if CONFIG_FFMPEG_IVR
+#include "ivr_rotate_logger.h"
+#endif
+
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
@@ -1246,6 +1250,13 @@ int opt_max_alloc(void *optctx, const char *opt, const char *arg)
     av_max_alloc(max);
     return 0;
 }
+
+#if CONFIG_FFMPEG_IVR
+int opt_null(void *optctx, const char *opt, const char *arg)
+{
+    return 0;
+}
+#endif
 
 int opt_loglevel(void *optctx, const char *opt, const char *arg)
 {

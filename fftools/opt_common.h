@@ -181,6 +181,10 @@ int show_colors(void *optctx, const char *opt, const char *arg);
  */
 int opt_loglevel(void *optctx, const char *opt, const char *arg);
 
+#if CONFIG_FFMPEG_IVR
+int opt_null(void *optctx, const char *opt, const char *arg);
+#endif
+
 int opt_report(void *optctx, const char *opt, const char *arg);
 int init_report(const char *env, FILE **file);
 
@@ -195,6 +199,14 @@ int opt_cpuflags(void *optctx, const char *opt, const char *arg);
  * Override the cpucount.
  */
 int opt_cpucount(void *optctx, const char *opt, const char *arg);
+
+#if CONFIG_FFMPEG_IVR
+#define CMDUTILS_COMMON_OPTIONS_IVR                                                                                     \
+    { "log_rotate",   OPT_TYPE_FUNC, OPT_FUNC_ARG,          { .func_arg = opt_null},          "set auto-rotate logger params", "FILENAME:SIZE:ROTATE_NUM" }, \
+
+#else
+#define CMDUTILS_COMMON_OPTIONS_IVR
+#endif
 
 #define CMDUTILS_COMMON_OPTIONS                                                                                         \
     { "L",            OPT_TYPE_FUNC, OPT_EXIT,              { .func_arg = show_license },     "show license" },                          \
@@ -226,6 +238,7 @@ int opt_cpucount(void *optctx, const char *opt, const char *arg);
     { "cpuflags",     OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT, { .func_arg = opt_cpuflags },     "force specific cpu flags", "flags" },     \
     { "cpucount",     OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT, { .func_arg = opt_cpucount },     "force specific cpu count", "count" },     \
     { "hide_banner",  OPT_TYPE_BOOL, OPT_EXPERT,            {&hide_banner},                   "do not show program banner", "hide_banner" }, \
+    CMDUTILS_COMMON_OPTIONS_IVR                                                                                                             \
     CMDUTILS_COMMON_OPTIONS_AVDEVICE                                                                                    \
 
 #endif /* FFTOOLS_OPT_COMMON_H */

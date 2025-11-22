@@ -48,6 +48,11 @@
 #include "cmdutils.h"
 #include "fopen_utf8.h"
 #include "opt_common.h"
+
+#if CONFIG_FFMPEG_IVR
+#include "ivr_rotate_logger.h"
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include "compat/w32dlfcn.h"
@@ -57,7 +62,11 @@ AVDictionary *sws_dict;
 AVDictionary *swr_opts;
 AVDictionary *format_opts, *codec_opts;
 
+#if CONFIG_FFMPEG_IVR
+int hide_banner = 1;
+#else
 int hide_banner = 0;
+#endif
 
 void uninit_opts(void)
 {
@@ -585,6 +594,75 @@ void parse_loglevel(int argc, char **argv, const OptionDef *options)
     if (idx)
         hide_banner = 1;
 }
+
+#if CONFIG_FFMPEG_IVR
+
+int parse_log_rotate(int argc, char **argv, const OptionDef *options)
+{
+    int idx = locate_option(argc, argv, options, "log_rotate");
+    char * params = NULL;
+    char * p = NULL;
+    char * base_name_p = NULL, * file_size_p = NULL, * rotate_num_p = NULL;
+    int file_size = 0;
+    int rotate_num = 0;
+    int ret = 0;
+    
+    if (idx == 0 || argv[idx + 1] == NULL){
+        return 0; // no log rotate option
+    }
+    
+    params = strdup(argv[idx + 1]);
+
+    base_name_p = params;
+       
+    p = (char *)strchr(params, ':');
+    if(p){            
+        *p = 0;
+        p++;  
+        file_size_p = p;
+    }else{
+        ret = -1;
+        goto end;
+    }
+    p = strchr(p, ':');
+    if(p){
+        *p = 0;
+        p++;
+        rotate_num_p = p;        
+    }else{
+        ret = -1;     
+        goto end;
+    }
+    file_size = strtol(file_size_p, NULL, 0);
+    if(file_size == 0){
+        ret = -1;
+        goto end;
+    }
+    rotate_num = strtol(rotate_num_p, NULL, 0);
+    
+    ret = rotate_logger_init(base_name_p, file_size, rotate_num);
+    if(ret){
+        goto end;
+    }
+    av_log_set_callback(av_rotate_logger_callback);
+    
+    if(params != NULL){
+        free(params);
+        params = NULL;
+    } 
+    return 1;  //log_rotate is present 
+    
+end:
+
+    fprintf(stderr, "Error when parse log_rotate arguments\n");
+
+    if(params != NULL){
+        free(params);
+        params = NULL;
+    }   
+    return 0; //error, don't enable rotate logging
+}
+#endif
 
 static const AVOption *opt_find(void *obj, const char *name, const char *unit,
                             int opt_flags, int search_flags)

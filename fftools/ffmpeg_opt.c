@@ -83,6 +83,20 @@ char *print_graphs_format = NULL;
 int auto_conversion_filters = 1;
 int64_t stats_period = 500000;
 
+#if CONFIG_FFMPEG_IVR
+int input_io_timeout = 0;   //default is 0, disable input io timeout check
+int exit_on_timeout = 0;
+int64_t output_io_bw = 0;    //default is 0, disable IO bandwidth control, unit is Bytes/s
+int64_t cur_sec = 0;
+int64_t cur_bytes = 0;
+int force_dts_monotonicity = 0;
+int sync_av = 0;
+int debug_av_sync = 0;
+int debug_dts_monotonicity = 0;
+float dts_unsync_threshold = 1.0;
+int h264_annexb_check = 0;
+#endif
+
 
 static int file_overwrite     = 0;
 static int no_file_overwrite  = 0;
@@ -1680,6 +1694,35 @@ const OptionDef options[] = {
     { "xerror",                 OPT_TYPE_BOOL, OPT_EXPERT,
         { &exit_on_error },
         "exit on error", "error" },
+#if CONFIG_FFMPEG_IVR
+    { "input_io_timeout",       OPT_TYPE_INT, OPT_EXPERT,
+        { &input_io_timeout },
+        "set input IO timeout in milliseconds", "timeout" },
+    { "exit_on_timeout",        OPT_TYPE_BOOL, OPT_EXPERT,
+        { &exit_on_timeout },
+        "exit on input IO timeout", "" },
+    { "output_io_bw",           OPT_TYPE_INT64, OPT_EXPERT,
+        { &output_io_bw },
+        "set output IO bandwidth limit in bytes/second", "bytes" },
+    { "force_dts_monotonicity", OPT_TYPE_BOOL, OPT_EXPERT,
+        { &force_dts_monotonicity },
+        "force DTS monotonicity correction", "" },
+    { "sync_av",                OPT_TYPE_BOOL, OPT_EXPERT,
+        { &sync_av },
+        "synchronize audio and video streams", "" },
+    { "debug_av_sync",          OPT_TYPE_BOOL, OPT_EXPERT,
+        { &debug_av_sync },
+        "print debug info when timestamp unsync between video and audio stream, but not fix", "" },
+    { "debug_dts_monotonicity", OPT_TYPE_BOOL, OPT_EXPERT,
+        { &debug_dts_monotonicity },
+        "print debug info when dts is unmonotonicity in the stream", "" },
+    { "dts_unsync_threshold",   OPT_TYPE_FLOAT, OPT_EXPERT,
+        { &dts_unsync_threshold },
+        "timestamp unsync threshold in seconds", "threshold" },
+    { "h264_annexb_check",      OPT_TYPE_INT, OPT_EXPERT,
+        { &h264_annexb_check },
+        "check H.264 annex B format (0=off, 1=dump and continue, 2=strict)", "mode" },
+#endif
     { "abort_on",               OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT,
         { .func_arg = opt_abort_on },
         "abort on the specified condition flags", "flags" },
