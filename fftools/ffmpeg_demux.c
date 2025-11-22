@@ -103,6 +103,84 @@ typedef struct DemuxStream {
     int64_t                  lag;
 } DemuxStream;
 
+#if CONFIG_FFMPEG_IVR
+static const uint8_t *ivr_avc_find_startcode_internal(const uint8_t *p, const uint8_t *end)
+{
+    const uint8_t *a = p + 4 - ((intptr_t)p & 3);
+
+    for (end -= 3; p < a && p < end; p++) {
+        if (p[0] == 0 && p[1] == 0 && p[2] == 1)
+            return p;
+    }
+
+    for (end -= 3; p < end; p += 4) {
+        uint32_t x = *(const uint32_t*)p;
+//      if ((x - 0x01000100) & (~x) & 0x80008000) // little endian
+//      if ((x - 0x00010001) & (~x) & 0x00800080) // big endian
+        if ((x - 0x01010101) & (~x) & 0x80808080) { // generic
+            if (p[1] == 0) {
+                if (p[0] == 0 && p[2] == 1)
+                    return p;
+                if (p[2] == 0 && p[3] == 1)
+                    return p+1;
+            }
+            if (p[3] == 0) {
+                if (p[2] == 0 && p[4] == 1)
+                    return p+2;
+                if (p[4] == 0 && p[5] == 1)
+                    return p+3;
+            }
+        }
+    }
+
+    for (end += 3; p < end; p++) {
+        if (p[0] == 0 && p[1] == 0 && p[2] == 1)
+            return p;
+    }
+
+    return end + 3;
+}
+
+static const uint8_t *ivr_avc_find_startcode(const uint8_t *p, const uint8_t *end)
+{
+    const uint8_t *out = ivr_avc_find_startcode_internal(p, end);
+    if (p < out && out < end && !out[-1])
+        out--;
+    return out;
+}
+
+static int ivr_check_h264_annexb(const uint8_t *buf_in, int size)
+{
+    // check first is start_code
+    const uint8_t *p = buf_in;
+    const uint8_t *end = p + size;
+    const uint8_t *nal_start, *nal_end;
+
+    nal_start = ivr_avc_find_startcode(p, end);
+    
+    if (nal_start != buf_in) {
+        av_log(NULL, AV_LOG_WARNING,
+               "check_h264_annexb -> buf does not start with the h264 startcode\n");
+        return -1;
+    }
+    
+    while (nal_start < end) {
+        while (nal_start < end && !*(nal_start++)); // nal_start move to nal head
+        
+        nal_end = ivr_avc_find_startcode(nal_start, end); // find next startcode
+        
+        if (nal_end - nal_start == 0) { // check nal size
+            av_log(NULL, AV_LOG_WARNING,
+                   "check_h264_annexb -> nal size is 0\n");
+            return -1;
+        }
+        nal_start = nal_end;
+    }
+    
+    return 0;
+}
+#endif
+
 typedef struct Demuxer {
     InputFile             f;
 
@@ -893,6 +971,34 @@ static int input_thread(void *arg)
                 break;
             }
         }
+
+#if CONFIG_FFMPEG_IVR
+        // H.264 Annex B format validation
+        if (h264_annexb_check != 0 &&
+            ds->ist.par->codec_type == AVMEDIA_TYPE_VIDEO &&
+            ds->ist.par->codec_id == AV_CODEC_ID_H264) {
+            if (ivr_check_h264_annexb(dt.pkt_demux->data, dt.pkt_demux->size)) {
+                const char *strategy = "unknown";
+                if (h264_annexb_check == 1) {
+                    strategy = "dump packet";
+                } else if (h264_annexb_check == 2) {
+                    strategy = "discard packet";
+                }
+                av_log(d, AV_LOG_WARNING,
+                       "h264 annexb check fail in stream %d, %s\n",
+                       dt.pkt_demux->stream_index, strategy);
+                if (h264_annexb_check == 1) {
+                    av_pkt_dump_log2(NULL, AV_LOG_INFO, dt.pkt_demux, 1,
+                                     f->ctx->streams[dt.pkt_demux->stream_index]);
+                } else if (h264_annexb_check == 2) {
+                    av_pkt_dump_log2(NULL, AV_LOG_INFO, dt.pkt_demux, 0,
+                                     f->ctx->streams[dt.pkt_demux->stream_index]);
+                    av_packet_unref(dt.pkt_demux);
+                    continue;
+                }
+            }
+        }
+#endif
 
         ret = input_packet_process(d, dt.pkt_demux, &send_flags);
         if (ret < 0)
