@@ -232,7 +232,11 @@ static void ts_discontinuity_detect(Demuxer *d, InputStream *ist,
             disable_discontinuity_correction = 0;
     }
 
+#if CONFIG_FFMPEG_IVR
+    if (ds->next_dts != AV_NOPTS_VALUE && !disable_discontinuity_correction && !force_dts_monotonicity) {
+#else
     if (ds->next_dts != AV_NOPTS_VALUE && !disable_discontinuity_correction) {
+#endif
         int64_t delta = pkt_dts - ds->next_dts;
         if (fmt_is_discont) {
             if (FFABS(delta) > 1LL * dts_delta_threshold * AV_TIME_BASE ||
@@ -264,8 +268,13 @@ static void ts_discontinuity_detect(Demuxer *d, InputStream *ist,
                 }
             }
         }
+#if CONFIG_FFMPEG_IVR
+    } else if (ds->next_dts == AV_NOPTS_VALUE && !copy_ts &&
+               fmt_is_discont && d->last_ts != AV_NOPTS_VALUE && !force_dts_monotonicity) {
+#else
     } else if (ds->next_dts == AV_NOPTS_VALUE && !copy_ts &&
                fmt_is_discont && d->last_ts != AV_NOPTS_VALUE) {
+#endif
         int64_t delta = pkt_dts - d->last_ts;
         if (FFABS(delta) > 1LL * dts_delta_threshold * AV_TIME_BASE) {
             d->ts_offset_discont -= delta;
@@ -277,6 +286,32 @@ static void ts_discontinuity_detect(Demuxer *d, InputStream *ist,
                 pkt->pts -= av_rescale_q(delta, AV_TIME_BASE_Q, pkt->time_base);
         }
     }
+
+#if CONFIG_FFMPEG_IVR
+    // Force DTS monotonicity by adjusting timestamps when needed
+    if (force_dts_monotonicity &&
+        pkt_dts != AV_NOPTS_VALUE &&
+        ds->dts != AV_NOPTS_VALUE &&
+        (ist->par->codec_type == AVMEDIA_TYPE_VIDEO || ist->par->codec_type == AVMEDIA_TYPE_AUDIO)) {
+        
+        // Adjust the incoming packet by the accumulated monotonicity error
+        int64_t delta = pkt_dts - ds->dts;
+        if (delta < 0 || delta > 1LL * dts_delta_threshold * AV_TIME_BASE) {
+            if (ds->next_dts != AV_NOPTS_VALUE) {
+                delta = pkt_dts - ds->next_dts;
+            } else {
+                delta = pkt_dts - (ds->dts + 1000);
+            }
+            d->ts_offset_discont -= delta;
+            av_log(ist, AV_LOG_WARNING,
+                   "timestamp discontinuity %"PRId64", new offset= %"PRId64"\n",
+                   delta, d->ts_offset_discont);
+            pkt->dts -= av_rescale_q(delta, AV_TIME_BASE_Q, pkt->time_base);
+            if (pkt->pts != AV_NOPTS_VALUE)
+                pkt->pts -= av_rescale_q(delta, AV_TIME_BASE_Q, pkt->time_base);
+        }
+    }
+#endif
 
     d->last_ts = av_rescale_q(pkt->dts, pkt->time_base, AV_TIME_BASE_Q);
 }
