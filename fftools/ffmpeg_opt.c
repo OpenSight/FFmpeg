@@ -990,6 +990,16 @@ static int opt_vstats(void *optctx, const char *opt, const char *arg)
     return opt_vstats_file(NULL, opt, filename);
 }
 
+#if CONFIG_FFMPEG_IVR
+static int opt_log_rotate(void *optctx, const char *opt, const char *arg)
+{
+    (void)optctx;
+    (void)opt;
+    (void)arg;
+    return 0;
+}
+#endif
+
 static int opt_video_frames(void *optctx, const char *opt, const char *arg)
 {
     OptionsContext *o = optctx;
@@ -1695,6 +1705,9 @@ const OptionDef options[] = {
         { &exit_on_error },
         "exit on error", "error" },
 #if CONFIG_FFMPEG_IVR
+    { "log_rotate",           OPT_TYPE_FUNC, OPT_FUNC_ARG | OPT_EXPERT,
+        { .func_arg = opt_log_rotate },
+        "set log rotate output file/size/count", "file:size:count" },
     { "input_io_timeout",       OPT_TYPE_INT, OPT_EXPERT,
         { &input_io_timeout },
         "set input IO timeout in milliseconds", "timeout" },

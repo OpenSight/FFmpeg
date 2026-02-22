@@ -1019,6 +1019,9 @@ int main(int argc, char **argv)
 
     av_log_set_flags(AV_LOG_SKIP_REPEATED);
     parse_loglevel(argc, argv, options);
+#if CONFIG_FFMPEG_IVR
+    parse_log_rotate(argc, argv, options);
+#endif
 
 #if CONFIG_AVDEVICE
     avdevice_register_all();

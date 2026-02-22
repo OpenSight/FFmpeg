@@ -242,8 +242,8 @@ static int write_packet(Muxer *mux, OutputStream *ost, AVPacket *pkt)
             clock_gettime(CLOCK_MONOTONIC, &cur_ts);
             if(cur_sec == cur_ts.tv_sec){
                 // wait for next sec
-                useconds_t left = (1000000000 - cur_ts.tv_nsec) /1000 + 1;
-                usleep(left);
+                int64_t left = (1000000000 - cur_ts.tv_nsec) /1000 + 1;
+                av_usleep(left);
                 cur_ts.tv_sec++;
             }
             cur_bytes = 0; 

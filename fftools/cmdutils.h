@@ -405,7 +405,6 @@ void uninit_parse_context(OptionParseContext *octx);
  * Find the '-loglevel' option in the command line args and apply it.
  */
 void parse_loglevel(int argc, char **argv, const OptionDef *options);
-
 #if CONFIG_FFMPEG_IVR
 /**
  * Find the '-log_rotate' option in the command line args and apply it.
