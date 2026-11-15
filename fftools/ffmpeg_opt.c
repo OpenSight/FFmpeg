@@ -90,6 +90,7 @@ int64_t output_io_bw = 0;    //default is 0, disable IO bandwidth control, unit 
 int64_t cur_sec = 0;
 int64_t cur_bytes = 0;
 int force_dts_monotonicity = 0;
+int force_decodable_start = 0;
 int sync_av = 0;
 int debug_av_sync = 0;
 int debug_dts_monotonicity = 0;
@@ -1720,6 +1721,9 @@ const OptionDef options[] = {
     { "force_dts_monotonicity", OPT_TYPE_BOOL, OPT_EXPERT,
         { &force_dts_monotonicity },
         "force DTS monotonicity correction", "" },
+    { "force_decodable_start",  OPT_TYPE_BOOL, OPT_EXPERT,
+        { &force_decodable_start },
+        "start stream copy only on a video keyframe with valid PTS and DTS", "" },
     { "sync_av",                OPT_TYPE_BOOL, OPT_EXPERT,
         { &sync_av },
         "synchronize audio and video streams", "" },
