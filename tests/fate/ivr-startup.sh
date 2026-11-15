@@ -1,4 +1,23 @@
 #!/bin/sh
+#
+# Copyright (c) 2026 OpenSight (www.opensight.cn)
+#
+# This file is part of FFmpeg.
+#
+# FFmpeg is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+#
+# FFmpeg is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with FFmpeg; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+#
 # Regression tests for the CONFIG_FFMPEG_IVR -force_decodable_start option.
 #
 # A stream can be joined mid-GOP, where the demuxer emits leading video packets
@@ -8,7 +27,8 @@
 # leaving every later packet, key flag and B-frame untouched.
 #
 # It checks that:
-#   - without the option the corrupted startup is fatal (default stays off);
+#   - without the option, and with its negated form, the corrupted startup is
+#     fatal (default stays off, also after a positive option was given);
 #   - with the option stream copy starts on the next keyframe that carries
 #     present, ordered timestamps, and the output decodes as H.264/H.265 video
 #     with B-frame presentation reordering and monotonic DTS;
@@ -16,15 +36,50 @@
 #   - valid B-frame and non-B-frame streams are unchanged by the option at
 #     the packet level.
 #
-# Usage: ivr-startup.sh <ffmpeg> <ffprobe>
+# Usage (from tests/fate/ffmpeg.mak, where every ffmpeg/ffprobe invocation is
+# routed through the configured FATE target runner):
+#   ivr-startup.sh <target-exec> <target-path> <threads> <thread-type> <cpuflags>
+#
+# <target-exec> is the configure-time TARGET_EXEC command prefix, which may be
+# empty or contain arguments; the rest are the runner's resolved values.
 
 set -eu
 
-FFMPEG=$1
-FFPROBE=$2
+target_exec=$1
+target_path=$2
+threads=$3
+thread_type=$4
+cpuflags=$5
+
+FFMPEG=${target_path}/ffmpeg${PROGSUF:-}${EXECSUF:-}
+FFPROBE=${target_path}/ffprobe${PROGSUF:-}${EXECSUF:-}
 work=${TMPDIR:-/tmp}/ffmpeg-ivr-startup.$$
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 mkdir -p "$work"
+
+# Run a command through the configured target execution prefix. This follows
+# tests/fate-run.sh: target_exec is a command prefix and may contain
+# arguments, so it is expanded unquoted.
+run_target() {
+    test "${V:-0}" -gt 0 && echo "$target_exec" "$@" >&3
+    $target_exec "$@"
+}
+
+# Mirror the FATE ffmpeg wrapper: add the runner's global options and the
+# resolved thread options before every input.
+ffmpeg() {
+    dec_opts="-threads $threads -thread_type $thread_type"
+    ffmpeg_args="-nostdin -nostats -noauto_conversion_filters -cpuflags $cpuflags"
+    for arg in $@; do
+        [ x${arg} = x-i ] && ffmpeg_args="${ffmpeg_args} ${dec_opts}"
+        ffmpeg_args="${ffmpeg_args} ${arg}"
+    done
+    run_target "$FFMPEG" ${ffmpeg_args}
+}
+
+ffprobe() {
+    run_target "$FFPROBE" "$@"
+}
 
 MISSING='setts=pts=if(lt(N\,3)\,NOPTS\,PTS):dts=if(lt(N\,3)\,NOPTS\,DTS)'
 REVERSED='setts=pts=if(eq(N\,0)\,0\,PTS):dts=if(eq(N\,0)\,40\,DTS)'
@@ -50,8 +105,8 @@ make_video() {
         enc="-c:v libx265 -x265-params bframes=$bframes:keyint=25:min-keyint=25:scenecut=0:log-level=error"
     fi
     # shellcheck disable=SC2086
-    "$FFMPEG" -nostdin -v error -y -f lavfi -i testsrc2=size=320x180:rate=25 \
-        -t 2 $enc -pix_fmt yuv420p "$work/$name.mp4" ||
+    ffmpeg -v error -y -f lavfi -i testsrc2=size=320x180:rate=25 \
+        -t 2 $enc -pix_fmt yuv420p -f mp4 "$work/$name.mp4" ||
         fail "could not create $name fixture"
 }
 
@@ -61,7 +116,7 @@ write_flv() {
     option=$2
     shift 2
     # shellcheck disable=SC2086
-    if "$FFMPEG" -nostdin -v warning -hide_banner -y -xerror $option \
+    if ffmpeg -v warning -hide_banner -y -xerror $option \
         "$@" -codec copy -flvflags no_duration_filesize -f flv \
         "$work/$logfile.flv" >"$work/$logfile.log" 2>&1; then
         grep -Eq "$MUXER_ERROR" "$work/$logfile.log" &&
@@ -74,7 +129,7 @@ write_flv() {
 packets() {
     stream=$1
     file=$2
-    "$FFPROBE" -v error -select_streams "$stream" \
+    ffprobe -v error -select_streams "$stream" \
         -show_entries packet=pts,dts,flags -of csv=p=0 "$file"
 }
 
@@ -85,7 +140,7 @@ first_packet() {
 assert_decodes() {
     file=$1
     stream=$2
-    "$FFMPEG" -nostdin -v error -xerror -i "$file" -map "0:$stream" \
+    ffmpeg -auto_conversion_filters -v error -xerror -i "$file" -map "0:$stream" \
         -f null - >/dev/null 2>&1 || fail "output does not decode: $stream in $file"
 }
 
@@ -125,13 +180,13 @@ assert_video_start() {
         [ "$reordered" -eq 0 ] || fail "non-B-frame stream has reordered PTS in $file"
     fi
 
-    frames=$("$FFPROBE" -v error -select_streams v:0 -count_frames \
+    frames=$(ffprobe -v error -select_streams v:0 -count_frames \
         -show_entries stream=nb_read_frames -of csv=p=0 "$file")
     case $frames in
         ''|*[!0-9]*) fail "could not count decoded video frames in $file" ;;
     esac
     [ "$frames" -ge 15 ] || fail "decoded only $frames video frames in $file"
-    has_b=$("$FFPROBE" -v error -select_streams v:0 \
+    has_b=$(ffprobe -v error -select_streams v:0 \
         -show_entries stream=has_b_frames -of csv=p=0 "$file")
     if [ "$bframes" -gt 0 ]; then
         [ "$has_b" -ge 1 ] || fail "B-frame stream lost reordering in $file"
@@ -165,8 +220,9 @@ make_video h264 h264-b 3
 make_video h264 h264-nob 0
 make_video hevc hevc-b 3
 make_video hevc hevc-nob 0
-"$FFMPEG" -nostdin -v error -y -f lavfi -i sine=frequency=1000:sample_rate=48000 \
-    -t 2 -c:a aac -b:a 64k "$work/audio.m4a" || fail "could not create audio fixture"
+ffmpeg -auto_conversion_filters -v error -y -f lavfi \
+    -i sine=frequency=1000:sample_rate=48000 \
+    -t 2 -c:a aac -b:a 64k -f mp4 "$work/audio.m4a" || fail "could not create audio fixture"
 
 for codec in h264 hevc; do
     # The option defaults to off: the corrupted start must stay fatal.
@@ -185,6 +241,23 @@ for codec in h264 hevc; do
         -bsf:v "$REVERSED" -i "$work/$codec-b.mp4" ||
         fail "$codec: could not recover from reversed first timestamps"
     assert_video_start "$work/$codec-reversed.flv" 1
+
+    # Without the option the reversed start must stay fatal as well.
+    write_flv "$codec-reversed-off" "" -bsf:v "$REVERSED" -i "$work/$codec-b.mp4" &&
+        fail "$codec: reversed start unexpectedly succeeded without the option"
+    assert_muxer_failure "$codec-reversed-off"
+
+    # The boolean's negated form must leave the guard disabled, also when it
+    # follows and overrides an earlier positive use.
+    write_flv "$codec-negative" -noforce_decodable_start \
+        -bsf:v "$MISSING" -i "$work/$codec-b.mp4" &&
+        fail "$codec: -noforce_decodable_start enabled the guard"
+    assert_muxer_failure "$codec-negative"
+    write_flv "$codec-override-off" \
+        "-force_decodable_start -noforce_decodable_start" \
+        -bsf:v "$MISSING" -i "$work/$codec-b.mp4" &&
+        fail "$codec: a later -noforce_decodable_start did not disable the guard"
+    assert_muxer_failure "$codec-override-off"
 
     # A valid stream must be unaffected by the option, including B-frames.
     write_flv "$codec-valid-off" "" -i "$work/$codec-b.mp4" ||
