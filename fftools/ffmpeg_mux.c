@@ -492,6 +492,23 @@ static int of_streamcopy(OutputFile *of, OutputStream *ost, AVPacket *pkt)
         !ms->copy_initial_nonkeyframes)
         return AVERROR(EAGAIN);
 
+#if CONFIG_FFMPEG_IVR
+    /*
+     * A stream can be joined mid-GOP, where the demuxer has not established
+     * the timestamps of the first keyframe yet and emits leading video packets
+     * with a missing PTS/DTS or with PTS before DTS. Starting the copy on such
+     * a packet makes the FLV muxer reject it, which is fatal even without
+     * -xerror. Skip video packets until a keyframe carrying both timestamps in
+     * a valid order arrives; earlier packets are not a decodable boundary.
+     */
+    if (force_decodable_start && !ms->streamcopy_started &&
+        ost->type == AVMEDIA_TYPE_VIDEO &&
+        (!(pkt->flags & AV_PKT_FLAG_KEY) ||
+         pkt->pts == AV_NOPTS_VALUE || pkt->dts == AV_NOPTS_VALUE ||
+         pkt->pts < pkt->dts))
+        return AVERROR(EAGAIN);
+#endif
+
     if (!ms->streamcopy_started) {
         if (!ms->copy_prior_start &&
             (pkt->pts == AV_NOPTS_VALUE ?

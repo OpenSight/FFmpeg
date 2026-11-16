@@ -771,6 +771,7 @@ extern int64_t output_io_bw;
 extern int64_t cur_sec;
 extern int64_t cur_bytes;
 extern int force_dts_monotonicity;
+extern int force_decodable_start;
 extern int sync_av;
 extern int debug_av_sync;
 extern int debug_dts_monotonicity;

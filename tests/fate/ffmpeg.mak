@@ -267,3 +267,16 @@ FATE_FFMPEG-$(call ENCDEC2, MPEG2VIDEO, FFV1, NUT, HSTACK_FILTER PIPE_PROTOCOL F
 # test matching by stream disposition
 fate-ffmpeg-spec-disposition: CMD = framecrc -i $(TARGET_SAMPLES)/mpegts/pmtchange.ts -map '0:disp:visual_impaired+descriptions:1' -c copy
 FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MPEGTS,,) += fate-ffmpeg-spec-disposition
+
+# CONFIG_FFMPEG_IVR: -force_decodable_start must recover a stream copy whose
+# first video packets carry missing or reversed timestamps, without changing
+# valid B-frame/non-B-frame output or audio timing.
+FATE_FFMPEG_IVR-$(call ALLYES, FFMPEG_IVR LIBX264_ENCODER LIBX265_ENCODER AAC_ENCODER \
+                              H264_DECODER HEVC_DECODER AAC_DECODER                   \
+                              FLV_MUXER FLV_DEMUXER MP4_MUXER MOV_DEMUXER SETTS_BSF   \
+                              NULL_MUXER LAVFI_INDEV TESTSRC2_FILTER SINE_FILTER      \
+                              FILE_PROTOCOL PIPE_PROTOCOL) += fate-ffmpeg-ivr-startup
+fate-ffmpeg-ivr-startup: CMD = sh $(SRC_PATH)/tests/fate/ivr-startup.sh \
+    "$$target_exec" "$$target_path" "$$threads" "$$thread_type" "$$cpuflags"
+fate-ffmpeg-ivr-startup: CMP = null
+FATE_FFMPEG_FFPROBE += $(FATE_FFMPEG_IVR-yes)
