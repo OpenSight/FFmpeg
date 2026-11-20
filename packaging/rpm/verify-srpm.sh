@@ -12,16 +12,18 @@ srpm_path=
 rpm_path=
 work_dir=
 log_file=
+mirror=${MIRROR:-https://mirrors.aliyun.com/almalinux}
 jobs=$(nproc)
 while (( $# )); do
     case "$1" in
         --srpm) srpm_path=$2; shift 2 ;;
         --rpm) rpm_path=$2; shift 2 ;;
         --work-dir) work_dir=$2; shift 2 ;;
+        --mirror) mirror=$2; shift 2 ;;
         --log) log_file=$2; shift 2 ;;
         --jobs) jobs=$2; shift 2 ;;
         -h|--help)
-            echo "usage: $0 --srpm FILE --rpm FILE --work-dir DIR [--log FILE] [--jobs N]"
+            echo "usage: $0 --srpm FILE --rpm FILE --work-dir DIR [--mirror URL] [--log FILE] [--jobs N]"
             exit 0
             ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -46,7 +48,7 @@ echo "== rebuild =="
     -v "$(cd -- "$(dirname -- "$srpm_path")" && pwd):/src:ro" \
     -v "$(cd -- "$work_dir" && pwd):/out" \
     -v "$SCRIPT_DIR:/packaging:ro" \
-    -e "JOBS=$jobs" \
+    -e "JOBS=$jobs" -e "MIRROR=$mirror" \
     "$BASE_IMAGE" /bin/bash /packaging/rebuild-srpm.sh "/src/$(basename "$srpm_path")"
 
 mapfile -t rebuilt_rpms < <(find "$work_dir/rebuilt" -maxdepth 1 -type f -name 'opensight-ffmpeg-*.rpm')
@@ -82,6 +84,7 @@ printf 'candidate sha256: %s\nrebuilt sha256:   %s\n' "$candidate_sha" "$rebuilt
     || echo "rebuilt RPM is not byte-identical; payload and metadata match"
 
 echo "== rebuilt package checks and isolated install =="
-bash "$SCRIPT_DIR/verify-package.sh" --rpm "$rebuilt_rpm" --srpm "$srpm_path"
+bash "$SCRIPT_DIR/verify-package.sh" --rpm "$rebuilt_rpm" --srpm "$srpm_path" \
+    --mirror "$mirror"
 
 echo "SRPM rebuild verification passed for $rebuilt_nevra"

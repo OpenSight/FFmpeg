@@ -141,6 +141,65 @@ if python3 "$SCRIPT_DIR/configure-repos.py" --root "$fake_root" \
     fail "non-HTTPS mirror was accepted"
 fi
 
+echo "== output reservation =="
+# shellcheck source=output-dir.sh
+. "$SCRIPT_DIR/output-dir.sh"
+
+new_output="$tmp_dir/new-output"
+reserve_output_dir "$new_output" || fail "a new output directory was rejected"
+[[ -d $new_output ]] || fail "the reserved output directory was not created"
+
+empty_output="$tmp_dir/empty-output"
+mkdir -p "$empty_output"
+( reserve_output_dir "$empty_output" ) \
+    || fail "an empty output directory was rejected"
+
+nonempty_output="$tmp_dir/nonempty-output"
+mkdir -p "$nonempty_output"
+printf 'keep me\n' > "$nonempty_output/existing-evidence"
+if ( reserve_output_dir "$nonempty_output" ) 2>/dev/null; then
+    fail "a non-empty output directory was accepted"
+fi
+[[ $(cat "$nonempty_output/existing-evidence") == 'keep me' ]] \
+    || fail "a rejected output directory was modified"
+
+file_output="$tmp_dir/file-output"
+printf 'not a directory\n' > "$file_output"
+if ( reserve_output_dir "$file_output" ) 2>/dev/null; then
+    fail "a regular file was accepted as an output directory"
+fi
+
+locked_output="$tmp_dir/locked-output"
+mkdir -p "$locked_output"
+exec {holder_fd}< "$locked_output"
+flock -n "$holder_fd" || fail "could not hold the test lock"
+if ( reserve_output_dir "$locked_output" ) 2>/dev/null; then
+    fail "an output directory locked by another build was accepted"
+fi
+exec {holder_fd}>&-
+
+echo "== private soname pattern =="
+soname_re=$(sed -n "s/^private_soname_re='\(.*\)'$/\1/p" "$SCRIPT_DIR/verify-package.sh")
+[[ -n $soname_re ]] || fail "could not read the private soname pattern"
+for soname in \
+    'libavcodec.so.62()(64bit)' \
+    'libavdevice.so.62()(64bit)' \
+    'libavfilter.so.11()(64bit)' \
+    'libavformat.so.62()(64bit)' \
+    'libavutil.so.60()(64bit)' \
+    'libswresample.so.6()(64bit)' \
+    'libswscale.so.9()(64bit)' \
+    'libx264.so.165()(64bit)' \
+    'libx265.so.215()(64bit)'; do
+    grep -Eq "$soname_re" <<<"$soname" \
+        || fail "private soname pattern missed $soname"
+done
+for soname in 'libcurl.so.4()(64bit)' 'libva.so.2()(64bit)' 'libz.so.1()(64bit)'; do
+    if grep -Eq "$soname_re" <<<"$soname"; then
+        fail "private soname pattern matched a system library: $soname"
+    fi
+done
+
 echo "== syntax =="
 for script in "$SCRIPT_DIR"/*.sh; do
     bash -n "$script" || fail "bash syntax error in $script"

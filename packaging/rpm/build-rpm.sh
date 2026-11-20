@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd)
+# shellcheck source=output-dir.sh
+. "$SCRIPT_DIR/output-dir.sh"
 BASE_IMAGE=${BASE_IMAGE:-quay.io/almalinuxorg/almalinux@sha256:607a7368ceaff7b76991a9d33ca489dcd6f2b699deaa65ef712d7b8d661ddcc3}
 PODMAN_ROOT=${PODMAN_ROOT:-$HOME/.local/share/containers/storage}
 PODMAN_RUNROOT=${PODMAN_RUNROOT:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/containers}
@@ -22,7 +24,8 @@ usage() {
     cat <<'EOF'
 usage: build-rpm.sh --output DIR [options]
 
-  --output DIR          artifact directory (required)
+  --output DIR          new or empty artifact directory (required; an
+                        existing non-empty directory is refused, never deleted)
   --sources DIR         directory holding locked source archives (repeatable;
                         defaults to packaging/rpm/sources and the current directory)
   --download            download missing locked sources from their locked URLs
@@ -54,11 +57,14 @@ if (( ${#source_dirs[@]} == 0 )); then
     source_dirs=("$SCRIPT_DIR/sources" "$PWD")
 fi
 
-output_dir=$(mkdir -p "$output_dir" && cd -- "$output_dir" && pwd)
+# One build owns a new or empty output directory.  The guard takes an
+# advisory lock and refuses non-empty paths, so an existing build, evidence
+# set or unrelated directory is never deleted or overwritten.
+reserve_output_dir "$output_dir" || exit 2
+output_dir=$(cd -- "$output_dir" && pwd)
 work_dir="$output_dir/.work"
 # Logs stay visible next to the artifacts so they survive --clean-work.
 logs_dir="$output_dir/logs"
-rm -rf "$work_dir" "$logs_dir"
 mkdir -p "$work_dir/sources" "$work_dir/rpmbuild" "$logs_dir"
 exec > >(tee -a "$logs_dir/build-rpm.log") 2>&1
 
@@ -165,8 +171,11 @@ mapfile -t srpm_built_list < <(find "$work_dir/rpmbuild/SRPMS" -type f -name 'op
 [[ ${#srpm_built_list[@]} -eq 1 ]] || fail "expected one source RPM, found ${#srpm_built_list[@]}"
 rpm_built=${rpm_built_list[0]}
 srpm_built=${srpm_built_list[0]}
-cp -f "$rpm_built" "$output_dir/"
-cp -f "$srpm_built" "$output_dir/"
+for built in "$rpm_built" "$srpm_built"; do
+    target="$output_dir/$(basename "$built")"
+    [[ ! -e $target ]] || fail "refusing to overwrite existing artifact: $target"
+    cp -f "$built" "$target"
+done
 rpm_file="$output_dir/$(basename "$rpm_built")"
 srpm_file="$output_dir/$(basename "$srpm_built")"
 echo "binary RPM: $rpm_file"
@@ -178,7 +187,7 @@ overall=0
 if (( ! skip_target_verify )); then
     echo "== clean target install verification =="
     if bash "$SCRIPT_DIR/verify-package.sh" --rpm "$rpm_file" --srpm "$srpm_file" \
-        --log "$logs_dir/verify-package.log"; then
+        --mirror "$MIRROR" --log "$logs_dir/verify-package.log"; then
         target_status=passed
     else
         target_status=failed
@@ -188,7 +197,7 @@ fi
 if (( ! skip_srpm_rebuild )); then
     echo "== clean SRPM rebuild verification =="
     if bash "$SCRIPT_DIR/verify-srpm.sh" --srpm "$srpm_file" --rpm "$rpm_file" \
-        --work-dir "$work_dir/srpm-rebuild" --jobs "$jobs" \
+        --work-dir "$work_dir/srpm-rebuild" --jobs "$jobs" --mirror "$MIRROR" \
         --log "$logs_dir/verify-srpm.log"; then
         srpm_rebuild_status=passed
     else
@@ -198,16 +207,13 @@ if (( ! skip_srpm_rebuild )); then
 fi
 
 echo "== artifact manifest =="
-build_date_tag=$(date -u +%Y%m%d)
-proposed_rpm="opensight-ffmpeg-8.0-1.e21d6902a5.el10.${build_date_tag}.x86_64_v2.rpm"
-proposed_srpm="opensight-ffmpeg-8.0-1.e21d6902a5.el10.${build_date_tag}.src.rpm"
 (
     cd "$output_dir"
     sha256sum "$(basename "$rpm_file")" "$(basename "$srpm_file")" > SHA256SUMS
 )
 python3 - "$output_dir" "$rpm_file" "$srpm_file" "$srpm_rebuild_status" \
-    "$target_status" "$overall" "$proposed_rpm" "$proposed_srpm" "$BASE_IMAGE" \
-    "$MIRROR" "$jobs" "$lock_file" "$logs_dir" <<'PY'
+    "$target_status" "$overall" "$BASE_IMAGE" "$MIRROR" "$jobs" "$lock_file" \
+    "$logs_dir" <<'PY'
 import hashlib
 import json
 import os
@@ -215,8 +221,7 @@ import subprocess
 import sys
 
 (output_dir, rpm_path, srpm_path, rebuild_status, target_status, overall,
- proposed_rpm, proposed_srpm, base_image, mirror, jobs, lock_file,
- logs_dir) = sys.argv[1:]
+ base_image, mirror, jobs, lock_file, logs_dir) = sys.argv[1:]
 
 
 def qf(path, fmt):
@@ -286,13 +291,17 @@ manifest = {
         "image": base_image,
         "mirror": mirror,
         "jobs": int(jobs),
-        "date_tag": proposed_rpm.rsplit(".", 3)[-3],
     },
     "binary_rpm": binary,
     "source_rpm": source,
     "proposed_oss_files": {
-        "binary_rpm": proposed_rpm,
-        "source_rpm": proposed_srpm,
+        "prefix": "software/ffmpeg-rpm",
+        "binary_rpm": (
+            f"software/ffmpeg-rpm/{binary['sha256']}/{binary['file']}"
+        ),
+        "source_rpm": (
+            f"software/ffmpeg-rpm/{source['sha256']}/{source['file']}"
+        ),
         "binary_rpm_sha256": binary["sha256"],
         "source_rpm_sha256": source["sha256"],
     },
@@ -332,10 +341,13 @@ for name, entry in lock["sources"].items():
     lines.append(f"- {name}: `{entry['file']}` sha256 `{entry['sha256']}`")
 lines += [
     "",
-    "## Proposed immutable Hangzhou OSS names",
+    "## Proposed immutable Hangzhou OSS object keys",
     "",
-    f"- `{proposed_rpm}`",
-    f"- `{proposed_srpm}`",
+    f"- `{manifest['proposed_oss_files']['binary_rpm']}`",
+    f"- `{manifest['proposed_oss_files']['source_rpm']}`",
+    "",
+    "Each artifact is keyed by its own SHA-256 and keeps its RPM basename, so",
+    "same-day builds cannot collide and consumers can verify the served bytes.",
     "",
     "## Notes",
     "",

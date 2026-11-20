@@ -70,19 +70,30 @@ Private library behaviour:
 
 Host prerequisites:
 
-- Fedora (or another host with a working rootless Podman); the pilot was
-  validated with Podman 6.1.3.
-- Network access to the AlmaLinux mirror for build dependencies, unless the
-  build image and DNF metadata are already cached.
+- Linux with a working rootless Podman (the pilot was validated with Podman
+  6.1.3) and `flock` from util-linux.
+- Network access to the selected AlmaLinux mirror for build dependencies,
+  unless the build image and DNF metadata are already cached.
+- Roughly 10 GB of free space for the container, build tree and artifacts.
 - The three locked source archives, either in `packaging/rpm/sources/`, in a
   directory passed with `--sources`, or fetched with `--download`.
 
+Choose a **new or empty** output directory for each build.  The entry point
+takes an advisory lock and refuses a non-empty path, so it cannot delete or
+overwrite another build's evidence; a failed run must be retried with a new
+`--output`.
+
 ```sh
 packaging/rpm/build-rpm.sh \
-  --output /home/hyt/devel/opensight/artifacts/lvr-111/ffmpeg \
-  --sources /var/tmp/lvr-bootc-media.eXA0Ghyi/sources \
-  --jobs 4
+  --output "$PWD/artifacts/ffmpeg-$(date -u +%Y%m%dT%H%M%SZ)" \
+  --sources /path/to/locked-sources \
+  --mirror https://mirrors.aliyun.com/almalinux \
+  --jobs "$(nproc)"
 ```
+
+Use `--download` instead of `--sources` to fetch the locked archives from
+their recorded URLs.  `--mirror` is propagated to the build container and to
+both verification containers (target install and SRPM rebuild).
 
 The entry point:
 
@@ -90,7 +101,7 @@ The entry point:
 2. starts the digest-pinned `quay.io/almalinuxorg/almalinux` 10.2 `amd64/v2`
    image (`sha256:607a7368…`), one of the `almalinux:10.2` index manifests;
 3. points BaseOS, AppStream, CRB and extras at the matching
-   `x86_64_v2` repository tree on the Aliyun mirror;
+   `x86_64_v2` repository tree on the selected mirror;
 4. installs the spec's `BuildRequires`, runs `rpmbuild -ba --target
    x86_64_v2-linux`, and records the build environment;
 5. installs the binary RPM with DNF in a clean copy of the same image and runs
@@ -101,9 +112,9 @@ The entry point:
 Use `--skip-target-verify` or `--skip-srpm-rebuild` only when iterating; a
 delivered candidate must have both enabled.
 
-Host note: on the pilot host, `/etc/containers/storage.conf` points at the
-rootful storage path, which a non-root user cannot use.  The scripts therefore
-pass explicit rootless `--root`/`--runroot` values
+Host note: if `/etc/containers/storage.conf` points at the rootful storage
+path, a non-root user cannot use it.  The scripts therefore default to
+explicit rootless `--root`/`--runroot` values
 (`$HOME/.local/share/containers/storage` and
 `$XDG_RUNTIME_DIR/containers`).  Override them with `PODMAN_ROOT`,
 `PODMAN_RUNROOT`, or `BASE_IMAGE` if the host layout differs.  No host
@@ -113,21 +124,23 @@ configuration is changed.
 
 `PACKAGE-MANIFEST.json` and `PACKAGE-MANIFEST.md` record the NEVRA, SHA-256,
 size, payload, generated dependencies, source baseline, build image,
-verification status and the proposed immutable OSS file names.
+verification status and the proposed immutable OSS object keys.
 `SHA256SUMS` covers the two RPMs.  `logs/` contains the host and container
 environment records, repository setup, DNF and `rpmbuild` output, source
 verification, and both verification runs.
 
-Proposed Hangzhou OSS names (uploads are deferred to the delivery phase):
+Proposed Hangzhou OSS object keys (uploads are deferred to the delivery
+phase).  Each artifact is keyed by its own SHA-256 and keeps its RPM
+basename unchanged, matching LVR's filename contract:
 
 ```
-opensight-ffmpeg-8.0-1.e21d6902a5.el10.<YYYYMMDD>.x86_64_v2.rpm
-opensight-ffmpeg-8.0-1.e21d6902a5.el10.<YYYYMMDD>.src.rpm
+software/ffmpeg-rpm/<binary-rpm-sha256>/opensight-ffmpeg-8.0-1.e21d6902a5.el10.x86_64_v2.rpm
+software/ffmpeg-rpm/<source-rpm-sha256>/opensight-ffmpeg-8.0-1.e21d6902a5.el10.src.rpm
 ```
 
-The `<YYYYMMDD>` build stamp keeps a rebuilt artifact from silently replacing
-an earlier one.  Consumers pin the RPM header NEVRA plus SHA-256; the OSS file
-name is not the identity.
+The SHA-256 key component makes same-day builds distinct and lets a consumer
+verify the served bytes before pinning them.  Consumers pin the RPM header
+NEVRA plus SHA-256; the OSS key is not the package identity.
 
 ## Source lock
 
@@ -165,7 +178,9 @@ Use `verify-srpm.sh` to run the full comparison and install check.
 
 `selftest.sh` exercises the source-lock verifier (success, checksum mismatch,
 size mismatch, missing file, unsafe name), the repository rewriter on a fake
-root, and script syntax.  It needs no network and no source archives.
+root, the output-directory reservation (new, empty, non-empty, file and
+locked paths), the private-soname pattern, and script syntax.  It needs no
+network and no source archives.
 
 ## Limitations
 

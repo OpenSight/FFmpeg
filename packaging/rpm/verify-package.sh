@@ -11,13 +11,15 @@ PODMAN_RUNROOT=${PODMAN_RUNROOT:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/containe
 rpm_path=
 srpm_path=
 log_file=
+mirror=${MIRROR:-https://mirrors.aliyun.com/almalinux}
 while (( $# )); do
     case "$1" in
         --rpm) rpm_path=$2; shift 2 ;;
         --srpm) srpm_path=$2; shift 2 ;;
+        --mirror) mirror=$2; shift 2 ;;
         --log) log_file=$2; shift 2 ;;
         -h|--help)
-            echo "usage: $0 --rpm FILE --srpm FILE [--log FILE]"
+            echo "usage: $0 --rpm FILE --srpm FILE [--mirror URL] [--log FILE]"
             exit 0
             ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -113,12 +115,13 @@ echo "== dependencies =="
 requires=$(rpm -qp --requires "$rpm_path")
 provides=$(rpm -qp --provides "$rpm_path")
 conflicts=$(rpm -qp --conflicts "$rpm_path")
-if grep -Eq '^(libav|libsw|libx26[45])\.so' <<<"$requires"; then
-    grep -E '^(libav|libsw|libx26[45])\.so' <<<"$requires" >&2
+private_soname_re='^(libav(codec|device|filter|format|util)|libsw(scale|resample)|libx26[45])\.so'
+if grep -Eq "$private_soname_re" <<<"$requires"; then
+    grep -E "$private_soname_re" <<<"$requires" >&2
     fail "private soname appears in generated Requires"
 fi
-if grep -Eq '^(libav|libsw|libx26[45])\.so' <<<"$provides"; then
-    grep -E '^(libav|libsw|libx26[45])\.so' <<<"$provides" >&2
+if grep -Eq "$private_soname_re" <<<"$provides"; then
+    grep -E "$private_soname_re" <<<"$provides" >&2
     fail "private soname appears in generated Provides"
 fi
 for soname in libcurl.so.4 libva.so.2 libasound.so.2 libssl.so.3 libcrypto.so.3 libstdc++.so.6; do
@@ -177,6 +180,7 @@ grep -q 'libavcodec\.so\.[0-9]*' <<<"$ffmpeg_dynamic" \
 echo "== isolated install =="
 "${podman_cmd[@]}" run --rm --platform linux/amd64/v2 --network=host \
     --security-opt label=disable \
+    -e "MIRROR=$mirror" \
     -v "$(cd -- "$(dirname -- "$rpm_path")" && pwd):/rpms:ro" \
     -v "$SCRIPT_DIR:/packaging:ro" \
     "$BASE_IMAGE" /bin/bash /packaging/verify-installed.sh "/rpms/$(basename "$rpm_path")"
