@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "source_baseline": {
+    "branch": "ffmpeg_ivr_8.0",
+    "commit": "e21d6902a5c4c4e4206b38fb61dd98a0294f7b5e",
+    "description": "FFmpeg source snapshot currently locked by the LVR bootc build"
+  },
+  "sources": {
+    "ffmpeg": {
+      "url": "https://opensight-public.oss-cn-hangzhou.aliyuncs.com/software/ffmpeg-ffmpeg_ivr_8.0-20261116-e21d6902a5.zip",
+      "file": "ffmpeg-ffmpeg_ivr_8.0-20261116-e21d6902a5.zip",
+      "sha256": "e62ce2cbc316e4033d708fc3e3ba7f26351e7411da3041b4a72360e49d4c91e6",
+      "size_bytes": 21955438,
+      "version": "8.0",
+      "commit": "e21d6902a5c4c4e4206b38fb61dd98a0294f7b5e"
+    },
+    "x264": {
+      "url": "https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+      "file": "x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+      "sha256": "6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224",
+      "size_bytes": 848719,
+      "commit": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
+    },
+    "x265": {
+      "url": "https://download.videolan.org/pub/videolan/x265/x265_4.1.tar.gz",
+      "file": "x265_4.1.tar.gz",
+      "sha256": "a31699c6a89806b74b0151e5e6a7df65de4b49050482fe5ebf8a4379d7af8f29",
+      "size_bytes": 1725279,
+      "version": "4.1"
+    }
+  }
+}
