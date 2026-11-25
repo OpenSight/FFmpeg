@@ -13,8 +13,8 @@ The build produces exactly two artifacts:
 
 | Artifact | Name |
 | --- | --- |
-| Runtime RPM | `opensight-ffmpeg-8.0-1.e21d6902a5.el10.x86_64_v2.rpm` |
-| Source RPM | `opensight-ffmpeg-8.0-1.e21d6902a5.el10.src.rpm` |
+| Runtime RPM | `opensight-ffmpeg-8.0-1.1.20261125.el10.x86_64_v2.rpm` |
+| Source RPM | `opensight-ffmpeg-8.0-1.1.20261125.el10.src.rpm` |
 
 The runtime RPM installs:
 
@@ -47,6 +47,33 @@ Private library behaviour:
   of `/usr/lib/opensight/ffmpeg/lib` and no build-time path.
 - `Conflicts: ffmpeg` and `Conflicts: ffmpeg-free` prevent a distribution
   package from claiming the same command names.
+
+## Release and OSS key
+
+Releases follow the shared
+[OpenSight RPM publishing convention](https://github.com/OpenSight/lvr/blob/master/deploy/bootc/README.md#opensight-rpm-publishing-convention):
+Release is `<source revision>.<packaging revision>.<UTC date YYYYMMDD>.<dist>`.
+The three inputs live at the top of `opensight-ffmpeg.spec`:
+
+```spec
+%global opensight_source_revision    1
+%global opensight_packaging_revision 1
+%global opensight_release_date       20261125
+```
+
+Edit them per release and rebuild. An SRPM rebuild reuses the archived values,
+so it reproduces the same Release. This release is `1.1.20261125.el10`.
+
+The runtime RPM publishes at the flat key, with no hash directory:
+
+```
+software/ffmpeg-rpm/opensight-ffmpeg-8.0-1.1.20261125.el10.x86_64_v2.rpm
+```
+
+The build, manifest and both verification scripts derive the name from the
+RPM header, so the file name, header NEVRA and manifest key cannot drift. The
+source RPM and recipe are retained locally for rebuild and handoff; the source
+RPM is not published.
 
 ## Build decisions
 
@@ -123,24 +150,22 @@ configuration is changed.
 ## Outputs
 
 `PACKAGE-MANIFEST.json` and `PACKAGE-MANIFEST.md` record the NEVRA, SHA-256,
-size, payload, generated dependencies, source baseline, build image,
-verification status and the proposed immutable OSS object keys.
-`SHA256SUMS` covers the two RPMs.  `logs/` contains the host and container
-environment records, repository setup, DNF and `rpmbuild` output, source
-verification, and both verification runs.
+size, payload, generated dependencies, source baseline and URLs, release
+inputs, build image, verification status, the runtime OSS key and the local
+source RPM.  `SHA256SUMS` covers the two RPMs.  `logs/` contains the host and
+container environment records, repository setup, DNF and `rpmbuild` output,
+source verification, and both verification runs.
 
-Proposed Hangzhou OSS object keys (uploads are deferred to the delivery
-phase).  Each artifact is keyed by its own SHA-256 and keeps its RPM
-basename unchanged, matching LVR's filename contract:
+Hangzhou OSS runtime key (the upload is deferred to the delivery phase):
 
 ```
-software/ffmpeg-rpm/<binary-rpm-sha256>/opensight-ffmpeg-8.0-1.e21d6902a5.el10.x86_64_v2.rpm
-software/ffmpeg-rpm/<source-rpm-sha256>/opensight-ffmpeg-8.0-1.e21d6902a5.el10.src.rpm
+software/ffmpeg-rpm/opensight-ffmpeg-8.0-1.1.20261125.el10.x86_64_v2.rpm
 ```
 
-The SHA-256 key component makes same-day builds distinct and lets a consumer
-verify the served bytes before pinning them.  Consumers pin the RPM header
-NEVRA plus SHA-256; the OSS key is not the package identity.
+The key adds no hash directory; the RPM basename is the key. A same-key
+republish must serve identical bytes. Consumers pin the RPM header NEVRA plus
+size and SHA-256, which the manifest records. The source RPM stays local and
+is not part of the published key set.
 
 ## Source lock
 
@@ -157,6 +182,12 @@ before compiling.  The spec also asserts AlmaLinux 10.2, a
 `x86_64_v2` glibc, matching repositories and a compiler that accepts
 `-march=x86-64-v2`.
 
+The FFmpeg source archive is already published at its locked `software/` OSS
+URL, and this release does not change it, so no new source publication is
+required. The lock, the spec, `verify-sources.py` and all three archives are
+archived in the source RPM, which is retained locally for rebuild and handoff
+together with the published source archive.
+
 ## Manual SRPM rebuild
 
 ```sh
@@ -167,9 +198,9 @@ podman run --rm --platform linux/amd64/v2 --network=host \
   /bin/bash -c '
     python3 /src/packaging/rpm/configure-repos.py &&
     dnf -y install dnf-plugins-core rpm-build &&
-    dnf -y --enablerepo=crb builddep /src/opensight-ffmpeg-8.0-1.e21d6902a5.el10.src.rpm &&
+    dnf -y --enablerepo=crb builddep /src/opensight-ffmpeg-8.0-1.1.20261125.el10.src.rpm &&
     rpmbuild --rebuild --target x86_64_v2-linux \
-      --define "_topdir /out/rpmbuild" /src/opensight-ffmpeg-8.0-1.e21d6902a5.el10.src.rpm'
+      --define "_topdir /out/rpmbuild" /src/opensight-ffmpeg-8.0-1.1.20261125.el10.src.rpm'
 ```
 
 Use `verify-srpm.sh` to run the full comparison and install check.

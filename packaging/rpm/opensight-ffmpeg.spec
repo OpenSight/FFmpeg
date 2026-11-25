@@ -3,6 +3,18 @@
 %global private_prefix %{_prefix}/lib/opensight/ffmpeg
 %global opensight_cflags -O2 -march=x86-64-v2 -mtune=generic
 
+# Release inputs for the shared OpenSight RPM publishing convention.  Edit
+# these three values for each release and rebuild; the values are archived in
+# the SRPM, so an SRPM rebuild reproduces the same Release.
+# - source_revision increments when the packaged upstream source changes and
+#   resets packaging_revision to 1;
+# - packaging_revision increments for a packaging, toolchain or dependency
+#   change that needs a new build of the same source;
+# - the release date is a controlled UTC YYYYMMDD input reused by rebuilds.
+%global opensight_source_revision    1
+%global opensight_packaging_revision 1
+%global opensight_release_date       20261125
+
 # The appliance invokes the binaries through their private RPATH.  The
 # packaged libraries are intentionally outside the system loader paths.
 %global debug_package %{nil}
@@ -19,7 +31,7 @@
 
 Name:           opensight-ffmpeg
 Version:        8.0
-Release:        1.%{source_short}%{?dist}
+Release:        %{opensight_source_revision}.%{opensight_packaging_revision}.%{opensight_release_date}%{?dist}
 Summary:        OpenSight FFmpeg with IVR extensions and private shared libraries
 License:        GPL-3.0-or-later
 URL:            https://github.com/OpenSight/FFmpeg
@@ -237,6 +249,10 @@ unset LD_LIBRARY_PATH
 %license %{_licensedir}/opensight-ffmpeg/COPYING.x265
 
 %changelog
+* Wed Nov 25 2026 OpenSight <opensource@opensight.cn> - 8.0-1.1.20261125
+- Adopt the shared OpenSight RPM release inputs and flat OSS runtime key.
+  The packaged source remains ffmpeg_ivr_8.0 at e21d6902a5.
+
 * Fri Nov 20 2026 OpenSight <opensource@opensight.cn> - 8.0-1.e21d6902a5
 - Pilot the OpenSight FFmpeg runtime package for AlmaLinux 10.2 x86_64_v2.
 - Build from the LVR-locked ffmpeg_ivr_8.0 source at e21d6902a5 with the

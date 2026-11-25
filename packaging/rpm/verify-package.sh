@@ -40,14 +40,26 @@ echo "== metadata =="
 rpm -qp --qf 'NEVRA: %{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}\nARCH: %{ARCH}\nLICENSE: %{LICENSE}\nSOURCERPM: %{SOURCERPM}\n' "$rpm_path"
 rpm -qpi "$rpm_path"
 
-nevra=$(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' "$rpm_path")
-[[ $nevra == opensight-ffmpeg-8.0-1.e21d6902a5.el10.x86_64_v2 ]] \
-    || fail "unexpected NEVRA: $nevra"
-[[ $(rpm -qp --qf '%{ARCH}' "$rpm_path") == x86_64_v2 ]] \
-    || fail "unexpected architecture"
+pkg_name=$(rpm -qp --qf '%{NAME}' "$rpm_path")
+pkg_version=$(rpm -qp --qf '%{VERSION}' "$rpm_path")
+pkg_release=$(rpm -qp --qf '%{RELEASE}' "$rpm_path")
+pkg_arch=$(rpm -qp --qf '%{ARCH}' "$rpm_path")
+nevra="$pkg_name-$pkg_version-$pkg_release.$pkg_arch"
+[[ $pkg_name == opensight-ffmpeg ]] || fail "unexpected package name: $pkg_name"
+[[ $pkg_version == 8.0 ]] || fail "unexpected version: $pkg_version"
+[[ $pkg_arch == x86_64_v2 ]] || fail "unexpected architecture: $pkg_arch"
+# Release carries <source revision>.<packaging revision>.<UTC date>.<dist>.
+[[ $pkg_release =~ ^[1-9][0-9]*\.[1-9][0-9]*\.[0-9]{8}\.el10$ ]] \
+    || fail "release does not follow the OpenSight convention: $pkg_release"
+# The published flat key is the actual basename, so the file name and the RPM
+# header must agree; the manifest derives both from this header.
+[[ $(basename "$rpm_path") == "$nevra.rpm" ]] \
+    || fail "artifact file name does not match its header NEVRA: $nevra"
 [[ $(rpm -qp --qf '%{LICENSE}' "$rpm_path") == GPL-3.0-or-later ]] \
     || fail "unexpected license"
 srpm_name=$(basename "$srpm_path")
+[[ $srpm_name == "$pkg_name-$pkg_version-$pkg_release.src.rpm" ]] \
+    || fail "source RPM file name does not match the binary Release"
 [[ $(rpm -qp --qf '%{SOURCERPM}' "$rpm_path") == "$srpm_name" ]] \
     || fail "binary RPM does not reference the supplied SRPM"
 
@@ -128,7 +140,7 @@ for soname in libcurl.so.4 libva.so.2 libasound.so.2 libssl.so.3 libcrypto.so.3 
     grep -q "^$soname" <<<"$requires" \
         || fail "generated Requires is missing $soname"
 done
-grep -q '^opensight-ffmpeg = 8.0-1.e21d6902a5' <<<"$provides" \
+grep -qx "opensight-ffmpeg = $pkg_version-$pkg_release" <<<"$provides" \
     || fail "package name/version Provides is missing"
 grep -q '^bundled(x264) = b35605ac' <<<"$provides" \
     || fail "bundled x264 declaration is missing"
@@ -149,8 +161,8 @@ done
 # An SRPM header carries the build arch (x86_64_v2), not the ".src" file
 # suffix, so compare the name-version-release portion.
 [[ $(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}' "$srpm_path") \
-    == opensight-ffmpeg-8.0-1.e21d6902a5.el10 ]] \
-    || fail "unexpected SRPM NEVRA"
+    == "$pkg_name-$pkg_version-$pkg_release" ]] \
+    || fail "SRPM does not match the binary package Release"
 [[ $(rpm -qp --qf '%{ARCH}' "$srpm_path") == x86_64_v2 ]] \
     || fail "unexpected SRPM build architecture"
 

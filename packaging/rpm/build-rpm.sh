@@ -259,6 +259,7 @@ binary = {
     "file": os.path.basename(rpm_path),
     "nevra": qf(rpm_path, "%{NEVRA}"),
     "arch": qf(rpm_path, "%{ARCH}"),
+    "release": qf(rpm_path, "%{RELEASE}"),
     "license": qf(rpm_path, "%{LICENSE}"),
     "sha256": digest(rpm_path),
     "size_bytes": os.path.getsize(rpm_path),
@@ -270,18 +271,26 @@ binary = {
 source = {
     "file": os.path.basename(srpm_path),
     "nevra": qf(srpm_path, "%{NEVRA}"),
+    "release": qf(srpm_path, "%{RELEASE}"),
     "sha256": digest(srpm_path),
     "size_bytes": os.path.getsize(srpm_path),
     "files": filelist(srpm_path),
 }
+release_parts = binary["release"].split(".")
 manifest = {
-    "issue": "OpenSight/lvr#111",
+    "issue": "OpenSight/home-repo#13",
     "repository": "OpenSight/FFmpeg",
     "pilot": "AlmaLinux 10.2 x86_64_v2 bootc appliance",
     "source_baseline": lock.get("source_baseline"),
+    "release_inputs": {
+        "source_revision": int(release_parts[0]),
+        "packaging_revision": int(release_parts[1]),
+        "release_date": release_parts[2],
+    },
     "sources": {
         name: {
             "file": entry["file"],
+            "url": entry["url"],
             "sha256": entry["sha256"],
             "size_bytes": entry["size_bytes"],
         }
@@ -294,16 +303,32 @@ manifest = {
     },
     "binary_rpm": binary,
     "source_rpm": source,
-    "proposed_oss_files": {
+    "oss_keys": {
         "prefix": "software/ffmpeg-rpm",
-        "binary_rpm": (
-            f"software/ffmpeg-rpm/{binary['sha256']}/{binary['file']}"
-        ),
-        "source_rpm": (
-            f"software/ffmpeg-rpm/{source['sha256']}/{source['file']}"
-        ),
-        "binary_rpm_sha256": binary["sha256"],
+        "runtime_rpm": f"software/ffmpeg-rpm/{binary['file']}",
+    },
+    "local_artifacts": {
+        "source_rpm": source["file"],
         "source_rpm_sha256": source["sha256"],
+        "note": (
+            "The source RPM and recipe are retained locally for rebuild, "
+            "verification and handoff; the source RPM is not published."
+        ),
+    },
+    "source_publication": {
+        "required_source_archives": [
+            {
+                "name": name,
+                "url": entry["url"],
+                "sha256": entry["sha256"],
+            }
+            for name, entry in lock["sources"].items()
+        ],
+        "note": (
+            "The runtime package already requires these published source "
+            "archives. They are unchanged by this release, so no new source "
+            "publication is required."
+        ),
     },
     "verification": {
         "target_install": target_status,
@@ -324,10 +349,13 @@ lines = [
     f"- Binary RPM: `{binary['nevra']}`",
     f"- Binary SHA-256: `{binary['sha256']}`",
     f"- Binary size: {binary['size_bytes']} bytes",
-    f"- Source RPM: `{source['nevra']}`",
+    f"- Source RPM (local): `{source['file']}`",
     f"- Source RPM SHA-256: `{source['sha256']}`",
     f"- Source RPM size: {source['size_bytes']} bytes",
     f"- Source baseline: `{lock['source_baseline']['commit']}`",
+    f"- Release inputs: source {manifest['release_inputs']['source_revision']}, "
+    f"packaging {manifest['release_inputs']['packaging_revision']}, "
+    f"date {manifest['release_inputs']['release_date']}",
     f"- Build image: `{base_image}`",
     f"- Build mirror: {mirror}",
     f"- Clean target install: {target_status}",
@@ -338,24 +366,40 @@ lines = [
     "",
 ]
 for name, entry in lock["sources"].items():
-    lines.append(f"- {name}: `{entry['file']}` sha256 `{entry['sha256']}`")
+    lines.append(
+        f"- {name}: `{entry['file']}` sha256 `{entry['sha256']}` "
+        f"({entry['url']})"
+    )
 lines += [
     "",
-    "## Proposed immutable Hangzhou OSS object keys",
+    "## Hangzhou OSS runtime key",
     "",
-    f"- `{manifest['proposed_oss_files']['binary_rpm']}`",
-    f"- `{manifest['proposed_oss_files']['source_rpm']}`",
+    f"- `{manifest['oss_keys']['runtime_rpm']}`",
     "",
-    "Each artifact is keyed by its own SHA-256 and keeps its RPM basename, so",
-    "same-day builds cannot collide and consumers can verify the served bytes.",
+    "The key is the package family prefix followed directly by the actual RPM",
+    "basename. The basename carries the RPM header NEVRA, so the published",
+    "file name, size, SHA-256 and header identify the same bytes.",
+    "",
+    "## Corresponding source",
+    "",
+    "The runtime package is built from the published source archives listed",
+    "above and from `sources.lock.json` plus `verify-sources.py` inside the",
+    "source RPM. Those archive URLs and checksums are unchanged by this",
+    "release, so no new source publication is required.",
+    "",
+    "The source RPM is retained locally for rebuild and handoff:",
+    "",
+    f"- `{source['file']}` sha256 `{source['sha256']}` "
+    f"({source['size_bytes']} bytes)",
     "",
     "## Notes",
     "",
-    "Uploads are intentionally deferred to the manager-coordinated delivery phase.",
+    "The runtime RPM upload is deferred to the manager-coordinated delivery",
+    "phase. The source RPM is not published.",
 ]
 with open(os.path.join(output_dir, "PACKAGE-MANIFEST.md"), "w", encoding="utf-8") as handle:
     handle.write("\n".join(lines) + "\n")
-print(json.dumps(manifest["proposed_oss_files"], indent=2))
+print(json.dumps(manifest["oss_keys"], indent=2))
 PY
 
 if (( clean_work )); then
